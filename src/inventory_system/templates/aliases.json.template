@@ -1,0 +1,99 @@
+{
+  "voltmeter": ["multimeter"],
+  "multimeter": ["voltmeter"],
+
+  "screwdriver": ["skrutrekker", "skrujern"],
+  "skrutrekker": ["screwdriver", "skrujern"],
+  "skrujern": ["screwdriver", "skrutrekker"],
+
+  "saw": ["sag", "motorsag"],
+  "sag": ["saw", "motorsag"],
+
+  "drill": ["eldrill", "driller", "borhammer", "drillbit"],
+  "bor": ["eldrill", "borhammer"],
+  "borhammer": ["drill", "eldrill"],
+  "driller": ["drill", "eldrill"],
+  "drillbit": ["drill", "borhammer"],
+
+  "angle grinder": ["vinkelsliper", "slipemaskin", "grinder"],
+  "vinkelsliper": ["angle grinder", "grinder", "slipemaskin"],
+  "grinder": ["vinkelsliper", "angle grinder"],
+
+  "welder": ["sveis", "welding", "sveiseapparat"],
+  "sveis": ["welder", "welding", "sveiseapparat"],
+  "welding": ["sveis", "welder", "sveiseapparat"],
+
+  "pliers": ["nebbtang", "tenger"],
+  "tang": ["nebbtang", "tenger"],
+  "tenger": ["pliers", "nebbtang"],
+  "nebbtang": ["pliers", "tenger"],
+
+  "wrench": ["nøkkel", "skiftnøkkel"],
+  "nøkkel": ["wrench", "skiftnøkkel"],
+  "skiftenøkkel": ["wrench", "nøkkel"],
+
+  "battery": ["batteri", "batterier", "akkumulator", "akku"],
+  "batteri": ["battery", "batterier", "akkumulator"],
+  "batterier": ["battery", "batteri", "akkumulator"],
+
+  "charger": ["lader", "ladere", "oplader"],
+  "lader": ["charger", "ladere", "oplader"],
+  "ladere": ["charger", "lader"],
+
+  "cable": ["kabel", "wire", "ledning", "kabeltrommel"],
+  "kabel": ["cable", "wire", "ledning"],
+  "wire": ["cable", "kabel", "ledning"],
+  "ledning": ["cable", "kabel", "wire"],
+
+  "ski": ["skisko", "skibukse", "skimaske"],
+  "skiing": ["ski", "skisko", "langrenn"],
+  "skis": ["ski", "skisko"],
+
+  "skates": ["skøyter", "skøyte"],
+  "skøyter": ["skates", "ice skates"],
+  "ice skates": ["skøyter", "skates"],
+
+  "bike": ["sykkel", "bicycle", "cykel"],
+  "bicycle": ["sykkel", "bike", "cykel"],
+  "sykkel": ["bike", "bicycle"],
+
+  "toys": ["leker", "leketøy"],
+  "leker": ["toys", "leketøy"],
+  "leketøy": ["leker", "toys"],
+
+  "clothes": ["klær", "tøy"],
+  "klær": ["clothes", "tøy"],
+  "tøy": ["klær", "clothes"],
+
+  "book": ["bok", "bøker"],
+  "books": ["bok", "bøker"],
+  "bok": ["book", "books", "bøker"],
+  "bøker": ["book", "books", "bok"],
+
+  "electronics": ["elektronikk", "electronic"],
+  "elektronikk": ["electronics", "electronic"],
+
+  "tools": ["verktøy", "tool"],
+  "tool": ["verktøy", "tools"],
+  "verktøy": ["tools", "tool"],
+
+  "box": ["boks", "bokser", "plastboks", "eske"],
+  "boks": ["box", "bokser", "plastboks"],
+  "bokser": ["box", "boks"],
+
+  "shoes": ["sko", "skisko"],
+  "sko": ["shoes"],
+
+  "children": ["barn", "kid"],
+  "child": ["barn", "kid"],
+  "kid": ["barn", "children"],
+  "kids": ["barn", "children"],
+  "barn": ["children", "kid"],
+
+  "outdoor": ["friluft", "utendørs"],
+  "friluft": ["outdoor"],
+  "camping": ["friluft", "telt"],
+
+  "car": ["bil"],
+  "bil": ["car"]
+}

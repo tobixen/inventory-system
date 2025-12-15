@@ -1,0 +1,1360 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Søkbar inventarliste</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        /* Intro section markdown styling */
+        #introText h3 {
+            color: #2c3e50;
+            font-size: 16px;
+            margin-top: 15px;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        #introText p {
+            margin-bottom: 10px;
+        }
+
+        #introText ul {
+            margin-left: 20px;
+            margin-bottom: 10px;
+        }
+
+        #introText li {
+            margin-bottom: 4px;
+        }
+
+        .search-container {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .search-box {
+            width: 100%;
+            padding: 12px 20px;
+            font-size: 16px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            transition: border-color 0.3s;
+        }
+
+        .search-box:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+
+        .filters {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            padding: 8px 16px;
+            background: #ecf0f1;
+            border: 2px solid transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 14px;
+        }
+
+        .filter-btn:hover {
+            background: #d5dbdd;
+        }
+
+        .filter-btn.active {
+            background: #3498db;
+            color: white;
+            border-color: #2980b9;
+        }
+
+        .view-toggle {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .view-btn {
+            padding: 10px 20px;
+            background: #ecf0f1;
+            border: 2px solid transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 15px;
+            font-weight: 500;
+        }
+
+        .view-btn:hover {
+            background: #d5dbdd;
+        }
+
+        .view-btn.active {
+            background: #2ecc71;
+            color: white;
+            border-color: #27ae60;
+        }
+
+        .gallery-view {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 20px;
+        }
+
+        .gallery-image-wrapper {
+            position: relative;
+            background: #f0f0f0;
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .gallery-image-wrapper:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+        }
+
+        .gallery-image-wrapper img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            display: block;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .gallery-image-wrapper img.loaded {
+            opacity: 1;
+        }
+
+        .image-metadata {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+            padding: 30px 10px 8px;
+            color: white;
+            font-size: 13px;
+        }
+
+        .image-container-id {
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .image-number {
+            opacity: 0.8;
+            font-size: 11px;
+        }
+
+        .lightbox-nav {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid white;
+            color: white;
+            font-size: 30px;
+            padding: 10px 20px;
+            cursor: pointer;
+            user-select: none;
+            border-radius: 4px;
+            transition: background 0.3s;
+        }
+
+        .lightbox-nav:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .lightbox-prev {
+            left: 20px;
+        }
+
+        .lightbox-next {
+            right: 20px;
+        }
+
+        .lightbox-info {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .stats {
+            margin-top: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .container-card {
+            background: white;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+            transition: box-shadow 0.3s;
+        }
+
+        .container-card:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+
+        .container-header {
+            padding: 15px 20px;
+            background: #34495e;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+
+        .container-header:hover {
+            background: #2c3e50;
+        }
+
+        .container-id {
+            font-weight: bold;
+            font-size: 18px;
+        }
+
+        .container-title {
+            flex: 1;
+            margin-left: 15px;
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .toggle-icon {
+            font-size: 20px;
+            transition: transform 0.3s;
+        }
+
+        .container-card.expanded .toggle-icon {
+            transform: rotate(180deg);
+        }
+
+        .container-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+
+        .container-card.expanded .container-content {
+            max-height: 10000px;
+            transition: max-height 0.5s ease-in;
+        }
+
+        .container-details {
+            padding: 20px;
+        }
+
+        .container-description {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-left: 4px solid #3498db;
+            border-radius: 4px;
+        }
+
+        .items-list {
+            margin-bottom: 20px;
+        }
+
+        .items-list h3 {
+            font-size: 16px;
+            margin-bottom: 10px;
+            color: #2c3e50;
+        }
+
+        .items-list ul {
+            list-style-position: inside;
+            padding-left: 10px;
+        }
+
+        .items-list li {
+            margin-bottom: 5px;
+            color: #555;
+        }
+
+        .highlight {
+            background: yellow;
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+
+        .images-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .image-wrapper {
+            position: relative;
+            padding-bottom: 75%;
+            background: #f0f0f0;
+            border-radius: 6px;
+            overflow: hidden;
+            cursor: pointer;
+        }
+
+        .image-wrapper img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .image-wrapper img.loaded {
+            opacity: 1;
+        }
+
+        .image-wrapper:hover img {
+            transform: scale(1.05);
+        }
+
+        .photos-link {
+            display: inline-block;
+            margin-bottom: 10px;
+            padding: 8px 16px;
+            background: #3498db;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        .photos-link:hover {
+            background: #2980b9;
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 40px;
+            background: white;
+            border-radius: 8px;
+            color: #999;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .lightbox {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .lightbox.active {
+            display: flex;
+        }
+
+        .lightbox img {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+        }
+
+        .lightbox-close {
+            position: absolute;
+            top: 20px;
+            right: 40px;
+            font-size: 40px;
+            color: white;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .parent-link {
+            color: #3498db;
+            text-decoration: none;
+            padding: 2px 6px;
+            border-radius: 3px;
+            transition: background 0.2s;
+            display: inline-block;
+            margin-left: 10px;
+        }
+
+        .parent-link:hover {
+            background: rgba(52, 152, 219, 0.1);
+            text-decoration: none;
+        }
+
+        .item-link {
+            color: #3498db;
+            text-decoration: none;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: inline-block;
+        }
+
+        .item-link:hover {
+            text-decoration: underline;
+        }
+
+        .item-link .item-id {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .item-link:hover .item-id {
+            background: #bbdefb;
+        }
+
+        .tag-badge {
+            display: inline-block;
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            margin-left: 4px;
+            font-weight: 500;
+        }
+
+        .tag-badge:hover {
+            background: #c8e6c9;
+            cursor: pointer;
+        }
+
+        .tag-filter-btn {
+            padding: 6px 12px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 16px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .tag-filter-btn:hover {
+            background: #f5f5f5;
+            border-color: #aaa;
+        }
+
+        .tag-filter-btn.active {
+            background: #e8f5e9;
+            border-color: #2e7d32;
+            color: #2e7d32;
+            font-weight: 500;
+        }
+
+        @media (max-width: 768px) {
+            .images-grid {
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            }
+
+            .filters {
+                flex-direction: column;
+            }
+
+            .filter-btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏠 Inventarliste</h1>
+            <p>Søkbar database over bokser og innhold</p>
+            <div id="intro" style="display: none; margin-top: 15px; padding: 15px; background: #f8f9fa; border-left: 4px solid #3498db; border-radius: 4px;">
+                <button onclick="document.getElementById('introText').style.display = document.getElementById('introText').style.display === 'none' ? 'block' : 'none'" style="cursor: pointer; background: none; border: none; color: #3498db; font-size: 14px;">
+                    ▼ Om inventarlisten
+                </button>
+                <div id="introText" style="display: none; margin-top: 10px; font-size: 14px; line-height: 1.6;"></div>
+            </div>
+        </header>
+
+        <div class="search-container">
+            <input
+                type="text"
+                id="searchBox"
+                class="search-box"
+                placeholder="Søk etter boksnummer, innhold, beskrivelse..."
+                autocomplete="off"
+            >
+
+            <div class="filters" id="filters">
+                <button class="filter-btn active" data-filter="all">Alle bokser</button>
+                <button class="filter-btn" data-filter="Box">Box-serien</button>
+                <button class="filter-btn" data-filter="A">A-serien</button>
+                <button class="filter-btn" data-filter="H">H-serien</button>
+                <button class="filter-btn" data-filter="C">C-serien</button>
+                <button class="filter-btn" data-filter="B">B-serien</button>
+            </div>
+
+            <div class="view-toggle">
+                <button class="view-btn active" data-view="boxes">📦 Boksvisning</button>
+                <button class="view-btn" data-view="gallery">🖼️ Bildevisning</button>
+            </div>
+
+            <div class="tag-filter" id="tagFilter" style="margin-top: 15px;">
+                <!-- Tag filter buttons will be inserted here -->
+            </div>
+
+            <div class="stats" id="stats">
+                Laster data...
+            </div>
+        </div>
+
+        <div id="results" class="loading">
+            Laster inventardata...
+        </div>
+
+        <div id="gallery-view" style="display: none;">
+            <div class="gallery-grid" id="galleryGrid"></div>
+        </div>
+    </div>
+
+    <div class="lightbox" id="lightbox">
+        <span class="lightbox-close" onclick="closeLightbox()">&times;</span>
+        <span class="lightbox-nav lightbox-prev" onclick="navigateLightbox(-1)">‹</span>
+        <span class="lightbox-nav lightbox-next" onclick="navigateLightbox(1)">›</span>
+        <img id="lightboxImg" src="" alt="">
+        <div class="lightbox-info" id="lightboxInfo"></div>
+    </div>
+
+    <script>
+        let inventoryData = null;
+        let currentFilter = 'all';
+        let searchTerm = '';
+        let currentView = 'boxes';
+        let allImages = [];
+        let currentLightboxIndex = -1;
+        let aliasData = null;
+        let searchIndex = new Map();
+        let searchDebounceTimeout = null;
+        let containerIds = new Set();
+        let allTags = new Map(); // tag -> count
+        let selectedTags = new Set(); // currently selected tag filters (AND logic)
+
+        // Build flat image index for gallery view
+        function buildImageIndex() {
+            allImages = [];
+            if (!inventoryData) return;
+
+            inventoryData.containers.forEach(container => {
+                container.images.forEach((img, idx) => {
+                    allImages.push({
+                        containerId: container.id,
+                        containerHeading: container.heading,
+                        imageIndex: idx + 1,
+                        totalInContainer: container.images.length,
+                        image: img
+                    });
+                });
+            });
+        }
+
+        // Build tag collection with counts
+        function buildTagCollection() {
+            allTags.clear();
+            if (!inventoryData) return;
+
+            inventoryData.containers.forEach(container => {
+                container.items.forEach(item => {
+                    if (item.metadata && item.metadata.tags) {
+                        item.metadata.tags.forEach(tag => {
+                            allTags.set(tag, (allTags.get(tag) || 0) + 1);
+                        });
+                    }
+                });
+            });
+        }
+
+        // Display tag filter UI
+        function displayTagFilter() {
+            const tagFilterDiv = document.getElementById('tagFilter');
+            if (!tagFilterDiv || allTags.size === 0) {
+                if (tagFilterDiv) tagFilterDiv.style.display = 'none';
+                return;
+            }
+
+            tagFilterDiv.style.display = 'block';
+
+            // Sort tags by count (descending) then alphabetically
+            const sortedTags = Array.from(allTags.entries())
+                .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+            let html = '<div style="font-size: 12px; color: #666; margin-bottom: 5px;">';
+            html += 'Filter etter emneord (klikk flere for AND-filter):';
+            if (selectedTags.size > 0) {
+                html += ` <button class="tag-filter-btn" data-tag="" style="font-size: 11px; padding: 3px 8px;">Nullstill alle</button>`;
+            }
+            html += '</div>';
+            html += '<div style="display: flex; flex-wrap: wrap; gap: 5px;">';
+
+            // Add individual tag buttons (limit to top 20 tags)
+            sortedTags.slice(0, 20).forEach(([tag, count]) => {
+                const isSelected = selectedTags.has(tag);
+                html += `<button class="tag-filter-btn ${isSelected ? 'active' : ''}" data-tag="${tag}">`;
+                html += `${tag} (${count})`;
+                html += `</button>`;
+            });
+
+            html += '</div>';
+            tagFilterDiv.innerHTML = html;
+        }
+
+        // Build search index for faster lookups
+        function buildSearchIndex() {
+            searchIndex.clear();
+            if (!inventoryData) return;
+
+            inventoryData.containers.forEach(container => {
+                const containerId = container.id;
+                const searchableText = [
+                    container.heading,
+                    container.description,
+                    ...container.items.map(item => item.raw_text || item.name || item)
+                ].join(' ').toLowerCase();
+
+                searchIndex.set(containerId, searchableText);
+            });
+        }
+
+        // Expand search terms with aliases
+        function expandSearchWithAliases(term) {
+            if (!aliasData) return [term];
+
+            const lowerTerm = term.toLowerCase();
+            const terms = [lowerTerm];
+
+            // Add aliases if the term exists in the alias data
+            if (aliasData[lowerTerm]) {
+                terms.push(...aliasData[lowerTerm].map(alias => alias.toLowerCase()));
+            }
+
+            return terms;
+        }
+
+        // Simple markdown to HTML converter for intro section
+        function markdownToHtml(markdown) {
+            let html = '';
+            const lines = markdown.split('\n');
+            let inList = false;
+            let currentParagraph = '';
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const trimmed = line.trim();
+
+                // Headings
+                if (trimmed.startsWith('## ')) {
+                    if (currentParagraph) {
+                        html += `<p>${currentParagraph}</p>\n`;
+                        currentParagraph = '';
+                    }
+                    if (inList) {
+                        html += '</ul>\n';
+                        inList = false;
+                    }
+                    html += `<h3>${trimmed.substring(3)}</h3>\n`;
+                }
+                // List items
+                else if (trimmed.startsWith('* ')) {
+                    if (currentParagraph) {
+                        html += `<p>${currentParagraph}</p>\n`;
+                        currentParagraph = '';
+                    }
+                    if (!inList) {
+                        html += '<ul>\n';
+                        inList = true;
+                    }
+                    html += `<li>${trimmed.substring(2)}</li>\n`;
+                }
+                // Empty line - end current paragraph or list
+                else if (trimmed === '') {
+                    if (currentParagraph) {
+                        html += `<p>${currentParagraph}</p>\n`;
+                        currentParagraph = '';
+                    }
+                    if (inList) {
+                        html += '</ul>\n';
+                        inList = false;
+                    }
+                }
+                // Regular text - accumulate into paragraph
+                else {
+                    if (inList) {
+                        html += '</ul>\n';
+                        inList = false;
+                    }
+                    if (currentParagraph) {
+                        currentParagraph += ' ';
+                    }
+                    currentParagraph += trimmed;
+                }
+            }
+
+            // Close any remaining paragraph or list
+            if (currentParagraph) {
+                html += `<p>${currentParagraph}</p>\n`;
+            }
+            if (inList) {
+                html += '</ul>\n';
+            }
+
+            return html;
+        }
+
+        // Load JSON data
+        async function loadData() {
+            try {
+                // Load inventory data
+                const response = await fetch('inventory.json');
+                inventoryData = await response.json();
+
+                // Load aliases (optional - don't fail if not available)
+                try {
+                    const aliasResponse = await fetch('aliases.json');
+                    aliasData = await aliasResponse.json();
+                    console.log('✅ Loaded', Object.keys(aliasData).length, 'search aliases');
+                } catch (aliasError) {
+                    console.log('⚠️  Alias search disabled:', aliasError.message);
+                }
+
+                // Display intro text if available
+                if (inventoryData.intro) {
+                    document.getElementById('intro').style.display = 'block';
+                    document.getElementById('introText').innerHTML = markdownToHtml(inventoryData.intro);
+                }
+
+                buildImageIndex();
+                buildSearchIndex();
+                buildTagCollection();
+
+                // Build set of all container IDs for linking
+                containerIds.clear();
+                inventoryData.containers.forEach(container => {
+                    if (container.id) {
+                        containerIds.add(container.id);
+                    }
+                });
+
+                displayTagFilter();
+                displayResults();
+            } catch (error) {
+                document.getElementById('results').innerHTML =
+                    '<div class="no-results">Feil ved lasting av data. Sjekk at inventory.json eksisterer.</div>';
+            }
+        }
+
+        // Highlight search terms in text (including aliases)
+        function highlightText(text, term) {
+            if (!term) return text;
+
+            // Get all search terms including aliases
+            const searchTerms = expandSearchWithAliases(term);
+
+            // Escape special regex characters and create pattern for all terms
+            const escapedTerms = searchTerms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            const regex = new RegExp(`(${escapedTerms.join('|')})`, 'gi');
+
+            return text.replace(regex, '<span class="highlight">$1</span>');
+        }
+
+        // Clean heading by removing ID: prefix and other metadata
+        function cleanHeading(heading) {
+            // Remove patterns like "ID:xxx", "parent:xxx", etc.
+            return heading.replace(/\(?(?:ID|parent|type):[^\s)]+\)?/gi, '').replace(/\s+/g, ' ').trim();
+        }
+
+        // Scroll to a container by ID
+        function scrollToContainer(containerId) {
+            // Check if target exists in current view
+            let targetCard = document.querySelector(`[data-container-id="${containerId}"]`);
+
+            // If not found, clear search to show all containers
+            if (!targetCard) {
+                // Clear search and switch to container view if needed
+                searchTerm = '';
+                const searchBox = document.getElementById('searchBox');
+                if (searchBox) searchBox.value = '';
+
+                // Switch to container view if in gallery mode
+                if (currentView === 'gallery') {
+                    currentView = 'boxes';
+                    document.querySelectorAll('.view-btn').forEach(btn => {
+                        btn.classList.toggle('active', btn.dataset.view === 'boxes');
+                    });
+                }
+
+                displayResults();
+
+                // Wait for DOM to update, then scroll
+                // Use requestAnimationFrame for better timing
+                requestAnimationFrame(() => {
+                    setTimeout(() => {
+                        const target = document.querySelector(`[data-container-id="${containerId}"]`);
+                        if (target) {
+                            // Expand the container if it's collapsed
+                            if (!target.classList.contains('expanded')) {
+                                target.classList.add('expanded');
+                            }
+
+                            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                            // Highlight with background color and border
+                            const originalBg = target.style.backgroundColor;
+                            const originalBorder = target.style.border;
+                            target.style.backgroundColor = '#e3f2fd';
+                            target.style.border = '3px solid #2196F3';
+                            target.style.transition = 'all 0.3s ease';
+
+                            setTimeout(() => {
+                                target.style.backgroundColor = originalBg;
+                                target.style.border = originalBorder;
+                            }, 3000);
+                        } else {
+                            console.error(`Container ${containerId} not found in DOM after clearing filters`);
+                            console.log('Available containers:', Array.from(document.querySelectorAll('[data-container-id]')).map(el => el.dataset.containerId));
+                            alert(`Container ${containerId} ikke funnet`);
+                        }
+                    }, 200);
+                });
+            } else {
+                // Expand the container if it's collapsed
+                if (!targetCard.classList.contains('expanded')) {
+                    targetCard.classList.add('expanded');
+                }
+
+                targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                // Highlight with background color and border
+                const originalBg = targetCard.style.backgroundColor;
+                const originalBorder = targetCard.style.border;
+                targetCard.style.backgroundColor = '#e3f2fd';
+                targetCard.style.border = '3px solid #2196F3';
+                targetCard.style.transition = 'all 0.3s ease';
+
+                setTimeout(() => {
+                    targetCard.style.backgroundColor = originalBg;
+                    targetCard.style.border = originalBorder;
+                }, 3000);
+            }
+            return false; // Extra safeguard to prevent default behavior
+        }
+
+        // Check if container matches current filters
+        function containerMatchesFilters(container) {
+            // Filter by series
+            if (currentFilter !== 'all') {
+                if (currentFilter === 'Box' && !container.heading.startsWith('Box')) return false;
+                if (currentFilter !== 'Box' && !container.id.startsWith(currentFilter)) return false;
+            }
+
+            // Filter by selected tags (AND logic - must have ALL selected tags)
+            if (selectedTags.size > 0) {
+                // Collect all tags from all items in this container
+                const containerTags = new Set();
+                container.items.forEach(item => {
+                    if (item.metadata && item.metadata.tags) {
+                        item.metadata.tags.forEach(tag => containerTags.add(tag));
+                    }
+                });
+
+                // Check if container has ALL selected tags
+                for (const tag of selectedTags) {
+                    if (!containerTags.has(tag)) {
+                        return false;
+                    }
+                }
+            }
+
+            // Filter by search term
+            if (searchTerm) {
+                // Expand search term with aliases
+                const searchTerms = expandSearchWithAliases(searchTerm);
+
+                // Use pre-built search index for faster lookups
+                const indexedText = searchIndex.get(container.id);
+                if (indexedText) {
+                    // Check if any of the search terms (original + aliases) match
+                    return searchTerms.some(term => indexedText.includes(term));
+                }
+
+                // Fallback to direct search if not in index (shouldn't happen)
+                const searchLower = searchTerm.toLowerCase();
+                const matchInHeading = container.heading.toLowerCase().includes(searchLower);
+                const matchInDescription = container.description.toLowerCase().includes(searchLower);
+                const matchInItems = container.items.some(item => {
+                    // Handle both string (old format) and object (new format)
+                    if (typeof item === 'string') {
+                        return item.toLowerCase().includes(searchLower);
+                    }
+                    return (
+                        item.name?.toLowerCase().includes(searchLower) ||
+                        item.id?.toLowerCase().includes(searchLower) ||
+                        item.parent?.toLowerCase().includes(searchLower)
+                    );
+                });
+
+                return matchInHeading || matchInDescription || matchInItems;
+            }
+
+            return true;
+        }
+
+        // Display gallery view
+        function displayGalleryView() {
+            const galleryDiv = document.getElementById('galleryGrid');
+            const filteredContainers = inventoryData.containers.filter(containerMatchesFilters);
+
+            // Get images from filtered containers
+            const filteredImages = allImages.filter(img =>
+                filteredContainers.some(container => container.id === img.containerId)
+            );
+
+            // Update stats
+            document.getElementById('stats').innerHTML = `
+                Viser ${filteredImages.length} bilder fra ${filteredContainers.length} containere
+            `;
+
+            if (filteredImages.length === 0) {
+                galleryDiv.innerHTML = '<div class="no-results">Ingen bilder matchet søket</div>';
+                return;
+            }
+
+            galleryDiv.innerHTML = filteredImages.map((imgData, globalIndex) => `
+                <div class="gallery-image-wrapper" onclick="openLightboxAtIndex(${globalIndex})">
+                    <img
+                        data-src="${imgData.image.thumb}"
+                        alt="${imgData.image.alt}"
+                        class="lazy-image"
+                    >
+                    <div class="image-metadata">
+                        <div class="image-container-id">${imgData.containerId}</div>
+                        <div class="image-number">Bilde ${imgData.imageIndex}/${imgData.totalInContainer}</div>
+                    </div>
+                </div>
+            `).join('');
+
+            // Setup lazy loading
+            setupLazyLoading();
+        }
+
+        // Display results
+        function displayResults() {
+            if (currentView === 'gallery') {
+                document.getElementById('results').style.display = 'none';
+                document.getElementById('gallery-view').style.display = 'block';
+                displayGalleryView();
+                return;
+            }
+
+            // Container view
+            document.getElementById('results').style.display = 'block';
+            document.getElementById('gallery-view').style.display = 'none';
+
+            const resultsDiv = document.getElementById('results');
+            const filteredContainers = inventoryData.containers.filter(containerMatchesFilters);
+
+            // Update stats
+            document.getElementById('stats').innerHTML = `
+                Viser ${filteredContainers.length} av ${inventoryData.containers.length} containere
+                (${filteredContainers.reduce((sum, container) => sum + container.images.length, 0)} bilder)
+            `;
+
+            if (filteredContainers.length === 0) {
+                resultsDiv.innerHTML = '<div class="no-results">Ingen containere matchet søket</div>';
+                return;
+            }
+
+            resultsDiv.innerHTML = filteredContainers.map(container => `
+                <div class="container-card" data-container-id="${container.id}">
+                    <div class="container-header" onclick="toggleContainer(this, event)" title="${container.heading}">
+                        <span class="container-id" title="Container ID: ${container.id}">${container.id}</span>
+                        <span class="container-title">
+                            ${highlightText(cleanHeading(container.heading), searchTerm)}
+                            ${container.parent ? `<a href="#${container.parent}" class="parent-link" data-parent-id="${container.parent}" title="Gå til ${container.parent}">📍 ${container.parent}</a>` : ''}
+                        </span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                    <div class="container-content">
+                        <div class="container-details">
+                            ${container.description ? `
+                                <div class="container-description">
+                                    ${highlightText(container.description, searchTerm)}
+                                </div>
+                            ` : ''}
+
+                            ${container.items.length > 0 ? `
+                                <div class="items-list">
+                                    <h3>Innhold:</h3>
+                                    <ul>
+                                        ${container.items.map(item => {
+                                            // Handle both string (old) and object (new) formats
+                                            if (typeof item === 'string') {
+                                                return `<li>${highlightText(item, searchTerm)}</li>`;
+                                            }
+
+                                            // New format with metadata
+                                            let html = '<li>';
+                                            if (item.id) {
+                                                // Check if this item ID matches a container - make it clickable
+                                                if (containerIds.has(item.id)) {
+                                                    html += `<a href="#${item.id}" class="item-link" data-container-id="${item.id}" title="Gå til ${item.id}">`;
+                                                    html += `<code class="item-id">${item.id}</code>`;
+                                                    html += `</a> `;
+                                                } else {
+                                                    html += `<code class="item-id">${item.id}</code> `;
+                                                }
+                                            }
+                                            html += `<span class="item-name">${highlightText(item.name, searchTerm)}</span>`;
+                                            if (item.parent) {
+                                                html += ` <span class="item-parent">↑ ${item.parent}</span>`;
+                                            }
+                                            // Display tags as badges
+                                            if (item.metadata && item.metadata.tags && item.metadata.tags.length > 0) {
+                                                html += ' <span class="item-tags">';
+                                                item.metadata.tags.forEach(tag => {
+                                                    html += `<span class="tag-badge">${tag}</span>`;
+                                                });
+                                                html += '</span>';
+                                            }
+                                            html += '</li>';
+                                            return html;
+                                        }).join('')}
+                                    </ul>
+                                </div>
+                            ` : ''}
+
+                            ${container.photos_link ? `
+                                <a href="${container.photos_link}" class="photos-link" target="_blank">
+                                    📷 Se alle bilder i full oppløsning
+                                </a>
+                            ` : ''}
+
+                            ${container.images.length > 0 ? `
+                                <div class="images-grid">
+                                    ${container.images.map(img => `
+                                        <div class="image-wrapper" onclick="openLightbox('${img.full}')">
+                                            <img
+                                                data-src="${img.thumb}"
+                                                alt="${img.alt}"
+                                                class="lazy-image"
+                                            >
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            // Setup lazy loading for images
+            setupLazyLoading();
+        }
+
+        // Toggle container expansion
+        function toggleContainer(header, event) {
+            // Check if click came from a link - if so, ignore and let the link handler deal with it
+            if (event && (event.target.tagName === 'A' || event.target.closest('a'))) {
+                return;
+            }
+
+            const card = header.parentElement;
+            const wasExpanded = card.classList.contains('expanded');
+
+            card.classList.toggle('expanded');
+
+            // If expanding, load images
+            if (!wasExpanded) {
+                loadVisibleImages(card);
+            }
+        }
+
+        // Setup Intersection Observer for lazy loading
+        function setupLazyLoading() {
+            const imageObserver = new IntersectionObserver((entries, observer) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const img = entry.target;
+                        img.src = img.dataset.src;
+                        img.onload = () => {
+                            img.classList.add('loaded');
+                        };
+                        observer.unobserve(img);
+                    }
+                });
+            }, {
+                rootMargin: '50px'
+            });
+
+            document.querySelectorAll('.lazy-image').forEach(img => {
+                imageObserver.observe(img);
+            });
+        }
+
+        // Load images for a specific box
+        function loadVisibleImages(card) {
+            const images = card.querySelectorAll('.lazy-image');
+            images.forEach(img => {
+                if (!img.src || img.src === window.location.href) {
+                    img.src = img.dataset.src;
+                    img.onload = () => {
+                        img.classList.add('loaded');
+                    };
+                }
+            });
+        }
+
+        // Lightbox functions
+        function openLightbox(src) {
+            currentLightboxIndex = -1;
+            const lightbox = document.getElementById('lightbox');
+            const lightboxImg = document.getElementById('lightboxImg');
+            const lightboxInfo = document.getElementById('lightboxInfo');
+            lightboxImg.src = src;
+            lightboxInfo.innerHTML = '';
+            lightbox.classList.add('active');
+        }
+
+        function openLightboxAtIndex(index) {
+            if (currentView !== 'gallery') {
+                // If opening from box view, find the image in allImages
+                currentLightboxIndex = index;
+            } else {
+                // In gallery view, use the filtered images
+                const filteredContainers = inventoryData.containers.filter(containerMatchesFilters);
+                const filteredImages = allImages.filter(img =>
+                    filteredContainers.some(container => container.id === img.containerId)
+                );
+                currentLightboxIndex = index;
+            }
+
+            updateLightbox();
+        }
+
+        function updateLightbox() {
+            const filteredContainers = inventoryData.containers.filter(containerMatchesFilters);
+            const filteredImages = allImages.filter(img =>
+                filteredContainers.some(container => container.id === img.containerId)
+            );
+
+            if (currentLightboxIndex < 0 || currentLightboxIndex >= filteredImages.length) {
+                return;
+            }
+
+            const imgData = filteredImages[currentLightboxIndex];
+            const lightbox = document.getElementById('lightbox');
+            const lightboxImg = document.getElementById('lightboxImg');
+            const lightboxInfo = document.getElementById('lightboxInfo');
+
+            lightboxImg.src = imgData.image.full;
+            lightboxInfo.innerHTML = `
+                Bilde ${currentLightboxIndex + 1} av ${filteredImages.length} |
+                Container: ${imgData.containerId} (${imgData.imageIndex}/${imgData.totalInContainer})
+            `;
+            lightbox.classList.add('active');
+        }
+
+        function navigateLightbox(direction) {
+            const filteredContainers = inventoryData.containers.filter(containerMatchesFilters);
+            const filteredImages = allImages.filter(img =>
+                filteredContainers.some(container => container.id === img.containerId)
+            );
+
+            currentLightboxIndex += direction;
+
+            // Wrap around
+            if (currentLightboxIndex < 0) {
+                currentLightboxIndex = filteredImages.length - 1;
+            } else if (currentLightboxIndex >= filteredImages.length) {
+                currentLightboxIndex = 0;
+            }
+
+            updateLightbox();
+        }
+
+        function closeLightbox() {
+            document.getElementById('lightbox').classList.remove('active');
+            currentLightboxIndex = -1;
+        }
+
+        // Search functionality with debouncing
+        document.getElementById('searchBox').addEventListener('input', (e) => {
+            searchTerm = e.target.value.trim();
+
+            // Clear existing timeout
+            if (searchDebounceTimeout) {
+                clearTimeout(searchDebounceTimeout);
+            }
+
+            // Debounce: wait 150ms after user stops typing
+            searchDebounceTimeout = setTimeout(() => {
+                displayResults();
+            }, 150);
+        });
+
+        // Filter functionality
+        document.getElementById('filters').addEventListener('click', (e) => {
+            if (e.target.classList.contains('filter-btn')) {
+                document.querySelectorAll('.filter-btn').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+                e.target.classList.add('active');
+                currentFilter = e.target.dataset.filter;
+                displayResults();
+            }
+        });
+
+        // Tag filter functionality
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('tag-filter-btn')) {
+                const tag = e.target.dataset.tag;
+
+                if (!tag) {
+                    // Clear all button clicked
+                    selectedTags.clear();
+                } else {
+                    // Toggle tag selection
+                    if (selectedTags.has(tag)) {
+                        selectedTags.delete(tag);
+                    } else {
+                        selectedTags.add(tag);
+                    }
+                }
+
+                displayTagFilter(); // Update button states
+                displayResults();
+            }
+        });
+
+        // View toggle functionality
+        document.querySelectorAll('.view-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                currentView = e.target.dataset.view;
+                displayResults();
+            });
+        });
+
+        // Keyboard navigation for lightbox
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeLightbox();
+            } else if (e.key === 'ArrowLeft' && currentLightboxIndex >= 0) {
+                navigateLightbox(-1);
+            } else if (e.key === 'ArrowRight' && currentLightboxIndex >= 0) {
+                navigateLightbox(1);
+            }
+        });
+
+        // Close lightbox on background click
+        document.getElementById('lightbox').addEventListener('click', (e) => {
+            if (e.target.id === 'lightbox') {
+                closeLightbox();
+            }
+        });
+
+        // Event delegation for parent and item links
+        document.addEventListener('click', (e) => {
+            // Handle parent links
+            if (e.target.classList.contains('parent-link') || e.target.closest('.parent-link')) {
+                e.preventDefault();
+                e.stopPropagation();
+                const link = e.target.classList.contains('parent-link') ? e.target : e.target.closest('.parent-link');
+                const parentId = link.dataset.parentId;
+                if (parentId) {
+                    scrollToContainer(parentId);
+                }
+            }
+            // Handle item links (items with IDs that match containers)
+            else if (e.target.classList.contains('item-link') || e.target.closest('.item-link')) {
+                e.preventDefault();
+                e.stopPropagation();
+                const link = e.target.classList.contains('item-link') ? e.target : e.target.closest('.item-link');
+                const containerId = link.dataset.containerId;
+                if (containerId) {
+                    scrollToContainer(containerId);
+                }
+            }
+        });
+
+        // Load data on page load
+        loadData();
+    </script>
+</body>
+</html>
