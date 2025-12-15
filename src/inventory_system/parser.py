@@ -217,18 +217,22 @@ def parse_inventory(md_file: Path) -> Dict[str, Any]:
             current_section_id = container_id
 
             # Infer parent from heading hierarchy
+            # BUT: Don't overwrite if already inferred from explicit item listing
             parent_id = parsed['metadata'].get('parent')
             if not parent_id:
-                # Look for parent in heading stack (one level up)
-                parent_level = heading_level - 1
-                if parent_level in heading_stack:
-                    parent_id = heading_stack[parent_level]
-                    if container_id not in inferred_parents:
+                # Check if already inferred from explicit item listing (takes precedence)
+                if container_id in inferred_parents:
+                    parent_id = inferred_parents[container_id]
+                else:
+                    # Look for parent in heading stack (one level up)
+                    parent_level = heading_level - 1
+                    if parent_level in heading_stack:
+                        parent_id = heading_stack[parent_level]
                         inferred_parents[container_id] = parent_id
-                elif parent_level == 1 and current_top_level_id and container_id != current_top_level_id:
-                    # Fallback to top-level section for H2 headings
-                    if container_id not in inferred_parents:
+                    elif parent_level == 1 and current_top_level_id and container_id != current_top_level_id:
+                        # Fallback to top-level section for H2 headings
                         inferred_parents[container_id] = current_top_level_id
+                        parent_id = current_top_level_id
 
             # Update heading stack - clear all deeper levels
             heading_stack = {k: v for k, v in heading_stack.items() if k < heading_level}
