@@ -15,27 +15,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Supports `.jpg`, `.jpeg`, `.png`, `.gif` formats
   - Images automatically sorted by filename
   - Uses PIL/Pillow for high-quality resizing (max 800px, quality 85)
-- Support for `photos_link` in image discovery
-  - Allows split containers (e.g., A89-1, A89-2, A89-3) to share photo directories
-  - Parser respects `[Fotos, full oppløsning](photos/...)` links
-  - Falls back to container_id if no photos_link specified
+- Photo directory metadata support
+  - Containers can specify photo directory via `photos:dirname` in heading
+  - Allows split containers (e.g., A78-1, A78-2) to share photo directories
+  - Priority: photos metadata → photos_link (legacy) → container_id
+  - Example: `## ID:A78-1 photos:A78 A78 - stor`
 - Container-level tag support
   - Tags can be added to container headings (e.g., `tag:jul,påske`)
   - Search interface shows container-level tag badges when filtering
   - Parser extracts metadata from container headings
+- Click-to-view full resolution in lightbox
+  - Clicking on lightbox image opens full resolution in new tab
+  - Zoom-in cursor and tooltip indicate clickability
+  - Provides access to original unscaled images
 
 ### Changed
 - **Breaking:** Image references in markdown are now ignored
   - Images are discovered from filesystem instead of markdown `![...]` syntax
   - Workflow: copy photos to directories → re-parse → done
   - Removed 1,851 image reference lines from markdown (43% file size reduction)
+- **Breaking:** Photo links removed from markdown
+  - Removed 172 `[Fotos, full oppløsning](photos/...)` link lines
+  - Migrated to `photos:dirname` metadata in container headings (37 containers)
+  - Parser no longer parses photo link lines
+  - Cleaner markdown files with less clutter
 - Parser creates `metadata` field for all containers
-  - Includes tags, parent, type, and other metadata from headings
+  - Includes tags, parent, type, photos, and other metadata from headings
 
 ### Fixed
 - Split containers (relabeled IDs) now find their photos correctly
-  - Added photos links to H11-2, A78-1/2, A89-3, C18-2, C19-1/2, C20-1/2, C21-1/2, C23-2
-  - Images discovered increased from 1,297 to 1,999 (+702 images)
+  - Added photos metadata to H11-2, A78-1/2, A89-3, C18-2, C19-1/2, C20-1/2, C21-1/2, C23-2
+  - Images discovered increased from 1,297 to 2,082 (+785 images)
 
 ## [0.2.0] - 2025-12-15
 
