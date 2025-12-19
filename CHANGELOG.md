@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Automatic image discovery from filesystem
+  - Parser now scans `resized/{container_id}/` directories for images
+  - No more manual image list maintenance in markdown
+  - Supports `.jpg`, `.jpeg`, `.png`, `.gif` formats
+  - Images automatically sorted by filename
+- Support for `photos_link` in image discovery
+  - Allows split containers (e.g., A89-1, A89-2, A89-3) to share photo directories
+  - Parser respects `[Fotos, full oppløsning](photos/...)` links
+  - Falls back to container_id if no photos_link specified
+- Container-level tag support
+  - Tags can be added to container headings (e.g., `tag:jul,påske`)
+  - Search interface shows container-level tag badges when filtering
+  - Parser extracts metadata from container headings
+
+### Changed
+- **Breaking:** Image references in markdown are now ignored
+  - Images are discovered from filesystem instead of markdown `![...]` syntax
+  - Workflow: copy photos to directories → re-parse → done
+  - Removed 1,851 image reference lines from markdown (43% file size reduction)
+- Parser creates `metadata` field for all containers
+  - Includes tags, parent, type, and other metadata from headings
+
+### Fixed
+- Split containers (relabeled IDs) now find their photos correctly
+  - Added photos links to H11-2, A78-1/2, A89-3, C18-2, C19-1/2, C20-1/2, C21-1/2, C23-2
+  - Images discovered increased from 1,297 to 1,999 (+702 images)
+
 ## [0.2.0] - 2025-12-15
 
 ### Added
