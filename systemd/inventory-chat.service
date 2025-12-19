@@ -1,0 +1,20 @@
+[Unit]
+Description=Inventory Chatbot Server
+After=network.target
+
+[Service]
+Type=simple
+User=%u
+WorkingDirectory=%h/furusetalle9/inventory
+Environment="ANTHROPIC_API_KEY="
+ExecStart=/usr/bin/inventory-system chat
+Restart=on-failure
+RestartSec=5s
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=inventory-chat
+
+[Install]
+WantedBy=default.target

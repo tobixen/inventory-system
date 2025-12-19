@@ -1,0 +1,19 @@
+[Unit]
+Description=Inventory Web Server
+After=network.target
+
+[Service]
+Type=simple
+User=%u
+WorkingDirectory=%h/furusetalle9/inventory
+ExecStart=/usr/bin/inventory-system serve
+Restart=on-failure
+RestartSec=5s
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=inventory-web
+
+[Install]
+WantedBy=default.target
