@@ -395,11 +395,6 @@ def parse_inventory(md_file: Path) -> Dict[str, Any]:
                         'metadata': parsed['metadata'],
                         'indented': True
                     })
-                elif line_content.startswith('[Fotos'):
-                    # Link to full resolution photos
-                    match = re.match(r'\[([^\]]+)\]\(([^)]+)\)', line_content)
-                    if match:
-                        current_container['photos_link'] = match.group(2)
                 elif line_content.strip() and not line_content.startswith('#'):
                     # Description line
                     if not current_container['description']:
@@ -429,13 +424,23 @@ def parse_inventory(md_file: Path) -> Dict[str, Any]:
     for container in result['containers']:
         container_id = container.get('id')
         if container_id:
-            # Check if there's a photos_link that specifies a different directory
-            photos_link = container.get('photos_link', '')
-            if photos_link:
-                # Extract directory name from photos_link (e.g., "photos/A89" -> "A89")
-                photo_dir = photos_link.replace('photos/', '').strip('/')
-            else:
-                # Use container_id as directory name
+            # Check for photo directory override in metadata or photos_link
+            # Priority: 1) photos metadata, 2) photos_link, 3) container_id
+            photo_dir = None
+
+            # Check metadata for photos field
+            if container.get('metadata') and container['metadata'].get('photos'):
+                photo_dir = container['metadata']['photos']
+
+            # Fall back to photos_link (legacy support)
+            if not photo_dir:
+                photos_link = container.get('photos_link', '')
+                if photos_link:
+                    # Extract directory name from photos_link (e.g., "photos/A89" -> "A89")
+                    photo_dir = photos_link.replace('photos/', '').strip('/')
+
+            # Fall back to container_id
+            if not photo_dir:
                 photo_dir = container_id
 
             # Auto-discover images from photos/resized directories
