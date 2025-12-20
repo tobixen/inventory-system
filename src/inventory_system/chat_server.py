@@ -58,6 +58,7 @@ class ChatMessage(BaseModel):
     """Chat message from user."""
     message: str
     conversation_id: Optional[str] = None
+    model: str = "claude-3-haiku-20240307"  # Default to cheapest model
 
 
 class ChatResponse(BaseModel):
@@ -288,9 +289,9 @@ Important notes:
     # Create messages array
     messages = [{"role": "user", "content": message.message}]
 
-    # Initial API call
+    # Initial API call (use model from request)
     response = client.messages.create(
-        model="claude-3-opus-20240229",
+        model=message.model,
         max_tokens=4096,
         tools=INVENTORY_TOOLS,
         system=system_prompt,
@@ -317,7 +318,7 @@ Important notes:
 
         # Continue conversation
         response = client.messages.create(
-            model="claude-3-opus-20240229",
+            model=message.model,
             max_tokens=4096,
             tools=INVENTORY_TOOLS,
             system=system_prompt,
