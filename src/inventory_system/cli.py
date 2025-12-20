@@ -251,7 +251,7 @@ def api_command(directory: Path = None, port: int = 8765, host: str = "127.0.0.1
     # Import and run the API server
     try:
         import uvicorn
-        from .chat_server import app
+        from .api_server import app
     except ImportError as e:
         print(f"❌ Missing required package: {e}")
         print("\nInstall API server dependencies:")
