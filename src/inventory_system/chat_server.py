@@ -290,7 +290,7 @@ Important notes:
 
     # Initial API call
     response = client.messages.create(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-3-opus-20240229",
         max_tokens=4096,
         tools=INVENTORY_TOOLS,
         system=system_prompt,
@@ -317,7 +317,7 @@ Important notes:
 
         # Continue conversation
         response = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-3-opus-20240229",
             max_tokens=4096,
             tools=INVENTORY_TOOLS,
             system=system_prompt,
