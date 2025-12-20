@@ -1,7 +1,7 @@
 # Inventory System Makefile
 # Quick commands for managing inventory instances
 
-.PHONY: help install-templates create-instance start stop restart status logs enable disable list-instances
+.PHONY: help install install-templates create-instance start stop restart status logs enable disable list-instances
 
 # Configuration
 INSTANCE ?= furuset
@@ -12,6 +12,7 @@ help:
 	@echo "Inventory System - Multi-Instance Management"
 	@echo ""
 	@echo "Installation:"
+	@echo "  make install                       Install Python package in venv"
 	@echo "  make install-templates             Install systemd template services"
 	@echo "  make create-instance INSTANCE=name Create new instance (user + config)"
 	@echo ""
@@ -32,17 +33,25 @@ help:
 	@echo ""
 	@echo "Logs:"
 	@echo "  make logs INSTANCE=name            Show logs for instance"
-	@echo "  make logs-chat INSTANCE=name       Show chat logs only"
+	@echo "  make logs-api INSTANCE=name       Show chat logs only"
 	@echo "  make logs-web INSTANCE=name        Show web logs only"
 	@echo ""
 	@echo "Available instances: $(INSTANCES)"
 	@echo "Default instance: $(INSTANCE)"
 
+# Install Python package and dependencies
+install:
+	@echo "📦 Installing inventory-system Python package..."
+	@python3 -m venv venv
+	@venv/bin/pip install --upgrade pip
+	@venv/bin/pip install .
+	@echo "✅ Python package installed in venv/"
+
 # Install template services
 install-templates:
 	@echo "📦 Installing systemd template services..."
 	@sudo cp systemd/inventory-web@.service /etc/systemd/system/
-	@sudo cp systemd/inventory-chat@.service /etc/systemd/system/
+	@sudo cp systemd/inventory-api@.service /etc/systemd/system/
 	@sudo mkdir -p /etc/inventory-system
 	@sudo systemctl daemon-reload
 	@echo "✅ Template services installed!"
@@ -88,7 +97,7 @@ create-instance:
 		echo "# Inventory System Configuration for $(INSTANCE)" | sudo tee /etc/inventory-system/$(INSTANCE).conf > /dev/null; \
 		echo "INVENTORY_PATH=/path/to/$(INSTANCE)/inventory" | sudo tee -a /etc/inventory-system/$(INSTANCE).conf > /dev/null; \
 		echo "WEB_PORT=8000" | sudo tee -a /etc/inventory-system/$(INSTANCE).conf > /dev/null; \
-		echo "CHAT_PORT=8765" | sudo tee -a /etc/inventory-system/$(INSTANCE).conf > /dev/null; \
+		echo "API_PORT=8765" | sudo tee -a /etc/inventory-system/$(INSTANCE).conf > /dev/null; \
 		echo "ANTHROPIC_API_KEY=" | sudo tee -a /etc/inventory-system/$(INSTANCE).conf > /dev/null; \
 	fi
 	@echo "✅ Config created: /etc/inventory-system/$(INSTANCE).conf"
@@ -130,7 +139,7 @@ set-permissions:
 start:
 	@echo "🚀 Starting $(INSTANCE)..."
 	@sudo systemctl start inventory-web@$(INSTANCE).service
-	@sudo systemctl start inventory-chat@$(INSTANCE).service
+	@sudo systemctl start inventory-api@$(INSTANCE).service
 	@echo "✅ $(INSTANCE) started!"
 	@$(MAKE) status INSTANCE=$(INSTANCE)
 
@@ -138,28 +147,28 @@ start-web:
 	@sudo systemctl start inventory-web@$(INSTANCE).service
 	@echo "✅ Web server started for $(INSTANCE)"
 
-start-chat:
-	@sudo systemctl start inventory-chat@$(INSTANCE).service
-	@echo "✅ Chat server started for $(INSTANCE)"
+start-api:
+	@sudo systemctl start inventory-api@$(INSTANCE).service
+	@echo "✅ API server started for $(INSTANCE)"
 
 # Stop instance
 stop:
 	@echo "🛑 Stopping $(INSTANCE)..."
-	@sudo systemctl stop inventory-web@$(INSTANCE).service inventory-chat@$(INSTANCE).service
+	@sudo systemctl stop inventory-web@$(INSTANCE).service inventory-api@$(INSTANCE).service
 	@echo "✅ $(INSTANCE) stopped!"
 
 stop-web:
 	@sudo systemctl stop inventory-web@$(INSTANCE).service
 	@echo "✅ Web server stopped for $(INSTANCE)"
 
-stop-chat:
-	@sudo systemctl stop inventory-chat@$(INSTANCE).service
-	@echo "✅ Chat server stopped for $(INSTANCE)"
+stop-api:
+	@sudo systemctl stop inventory-api@$(INSTANCE).service
+	@echo "✅ API server stopped for $(INSTANCE)"
 
 # Restart instance
 restart:
 	@echo "🔄 Restarting $(INSTANCE)..."
-	@sudo systemctl restart inventory-web@$(INSTANCE).service inventory-chat@$(INSTANCE).service
+	@sudo systemctl restart inventory-web@$(INSTANCE).service inventory-api@$(INSTANCE).service
 	@echo "✅ $(INSTANCE) restarted!"
 	@$(MAKE) status INSTANCE=$(INSTANCE)
 
@@ -167,9 +176,9 @@ restart-web:
 	@sudo systemctl restart inventory-web@$(INSTANCE).service
 	@echo "✅ Web server restarted for $(INSTANCE)"
 
-restart-chat:
-	@sudo systemctl restart inventory-chat@$(INSTANCE).service
-	@echo "✅ Chat server restarted for $(INSTANCE)"
+restart-api:
+	@sudo systemctl restart inventory-api@$(INSTANCE).service
+	@echo "✅ API server restarted for $(INSTANCE)"
 
 # Status
 status:
@@ -179,7 +188,7 @@ status:
 	@sudo systemctl status inventory-web@$(INSTANCE).service --no-pager --lines=0 || true
 	@echo ""
 	@echo "Chat Server:"
-	@sudo systemctl status inventory-chat@$(INSTANCE).service --no-pager --lines=0 || true
+	@sudo systemctl status inventory-api@$(INSTANCE).service --no-pager --lines=0 || true
 	@echo ""
 	@# Get ports from config
 	@if [ -f "/etc/inventory-system/$(INSTANCE).conf" ]; then \
@@ -189,26 +198,26 @@ status:
 
 # Enable auto-start
 enable:
-	@sudo systemctl enable inventory-web@$(INSTANCE).service inventory-chat@$(INSTANCE).service
+	@sudo systemctl enable inventory-web@$(INSTANCE).service inventory-api@$(INSTANCE).service
 	@echo "✅ $(INSTANCE) will auto-start on boot"
 
 # Disable auto-start
 disable:
-	@sudo systemctl disable inventory-web@$(INSTANCE).service inventory-chat@$(INSTANCE).service
+	@sudo systemctl disable inventory-web@$(INSTANCE).service inventory-api@$(INSTANCE).service
 	@echo "✅ Auto-start disabled for $(INSTANCE)"
 
 # Logs
 logs:
 	@echo "📜 Logs for $(INSTANCE) (Ctrl+C to exit)..."
-	@sudo journalctl -u inventory-web@$(INSTANCE).service -u inventory-chat@$(INSTANCE).service -f
+	@sudo journalctl -u inventory-web@$(INSTANCE).service -u inventory-api@$(INSTANCE).service -f
 
 logs-web:
 	@echo "📜 Web server logs for $(INSTANCE) (Ctrl+C to exit)..."
 	@sudo journalctl -u inventory-web@$(INSTANCE).service -f
 
-logs-chat:
-	@echo "📜 Chat server logs for $(INSTANCE) (Ctrl+C to exit)..."
-	@sudo journalctl -u inventory-chat@$(INSTANCE).service -f
+logs-api:
+	@echo "📜 API server logs for $(INSTANCE) (Ctrl+C to exit)..."
+	@sudo journalctl -u inventory-api@$(INSTANCE).service -f
 
 # All instances commands
 start-all:
@@ -247,7 +256,7 @@ list-instances:
 			instance=$$(basename $$conf .conf); \
 			echo "  $$instance"; \
 			WEB_RUNNING=$$(systemctl is-active inventory-web@$$instance.service 2>/dev/null || echo "inactive"); \
-			CHAT_RUNNING=$$(systemctl is-active inventory-chat@$$instance.service 2>/dev/null || echo "inactive"); \
+			CHAT_RUNNING=$$(systemctl is-active inventory-api@$$instance.service 2>/dev/null || echo "inactive"); \
 			echo "    Web:  $$WEB_RUNNING"; \
 			echo "    Chat: $$CHAT_RUNNING"; \
 		fi; \
