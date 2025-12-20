@@ -208,7 +208,7 @@ def serve_command(directory: Path = None, port: int = 8000) -> int:
             return 0
 
 
-def api_command(directory: Path = None, port: int = 8765) -> int:
+def api_command(directory: Path = None, port: int = 8765, host: str = "127.0.0.1") -> int:
     """Start the inventory API server (chat, photo upload, item management)."""
     import os
 
@@ -240,7 +240,7 @@ def api_command(directory: Path = None, port: int = 8765) -> int:
 
     print(f"🚀 Starting Inventory API Server...")
     print(f"📂 Using inventory: {inventory_json}")
-    print(f"🌐 Server will run at: http://localhost:{port}")
+    print(f"🌐 Server will run at: http://{host}:{port}")
     print(f"💬 Chat endpoint: http://localhost:{port}/chat")
     print(f"📸 Photo upload: http://localhost:{port}/api/photos")
     print(f"➕ Add/remove items: http://localhost:{port}/api/items")
@@ -259,7 +259,7 @@ def api_command(directory: Path = None, port: int = 8765) -> int:
         return 1
 
     try:
-        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+        uvicorn.run(app, host=host, port=port, log_level="info")
     except KeyboardInterrupt:
         print("\n\n👋 Chat server stopped")
         return 0
@@ -311,11 +311,13 @@ Examples:
     api_parser = subparsers.add_parser('api', help='Start API server (chat, photos, item management)')
     api_parser.add_argument('directory', type=Path, nargs='?', help='Directory with inventory.json (default: current directory)')
     api_parser.add_argument('--port', '-p', type=int, default=8765, help='Port number (default: 8765)')
+    api_parser.add_argument('--host', type=str, default='127.0.0.1', help='Host to bind to (default: 127.0.0.1)')
 
     # Chat command (backwards compatibility alias for 'api')
     chat_parser = subparsers.add_parser('chat', help='[Deprecated] Use "api" instead')
     chat_parser.add_argument('directory', type=Path, nargs='?', help='Directory with inventory.json (default: current directory)')
     chat_parser.add_argument('--port', '-p', type=int, default=8765, help='Port number (default: 8765)')
+    chat_parser.add_argument('--host', type=str, default='127.0.0.1', help='Host to bind to (default: 127.0.0.1)')
 
     args = parser_cli.parse_args()
 
@@ -326,7 +328,7 @@ Examples:
     elif args.command == 'serve':
         return serve_command(args.directory, args.port)
     elif args.command == 'api' or args.command == 'chat':
-        return api_command(args.directory, args.port)
+        return api_command(args.directory, args.port, args.host)
     else:
         parser_cli.print_help()
         return 1
