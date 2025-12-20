@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import Optional, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import anthropic
+import shutil
 
 
 # Global inventory data
@@ -169,6 +170,25 @@ INVENTORY_TOOLS = [
             },
             "required": ["container_id", "item_description"]
         }
+    },
+    {
+        "name": "add_todo",
+        "description": "Add a change request or task to TODO.md. Use this when a request is too complex to handle directly or requires manual intervention (e.g., moving photos, reorganizing containers, complex metadata changes).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_description": {
+                    "type": "string",
+                    "description": "Detailed description of the task or change request"
+                },
+                "priority": {
+                    "type": "string",
+                    "description": "Priority level: low, medium, or high",
+                    "enum": ["low", "medium", "high"]
+                }
+            },
+            "required": ["task_description"]
+        }
     }
 ]
 
@@ -278,10 +298,12 @@ def list_containers(parent: Optional[str] = None, tags: Optional[list] = None, p
 
     for container in inventory_data.get('containers', []):
         # Apply filters
-        if parent and container.get('parent', '').lower() != parent.lower():
-            continue
+        if parent:
+            container_parent = container.get('parent') or ''
+            if container_parent.lower() != parent.lower():
+                continue
 
-        if prefix and not container.get('id', '').startswith(prefix):
+        if prefix and not (container.get('id') or '').startswith(prefix):
             continue
 
         if tags:
@@ -320,6 +342,201 @@ def reload_inventory() -> bool:
         return False
 
 
+def git_commit(message: str) -> bool:
+    """Create a git commit for inventory changes."""
+    if not inventory_path:
+        return False
+
+    import subprocess
+    import pwd
+
+    try:
+        inventory_dir = inventory_path.parent
+        current_uid = os.getuid()
+        current_user = pwd.getpwuid(current_uid).pw_name
+
+        # Get the owner of the inventory directory
+        stat_info = os.stat(inventory_dir)
+        owner_uid = stat_info.st_uid
+        owner_name = pwd.getpwuid(owner_uid).pw_name
+
+        # Check if we're running as a different user than the directory owner
+        if current_uid != owner_uid:
+            # Configure git safe.directory for this directory
+            try:
+                subprocess.run(
+                    ['git', 'config', '--global', '--add', 'safe.directory', str(inventory_dir)],
+                    check=True,
+                    capture_output=True
+                )
+                print(f"ℹ️  Added {inventory_dir} to git safe.directory for {current_user}")
+            except:
+                pass  # May already be added
+
+        # Add all changes (inventory.md, inventory.json, photo-listings/, photos/)
+        subprocess.run(
+            ['git', 'add', 'inventory.md', 'inventory.json', 'photo-listings/', 'photos/'],
+            cwd=inventory_dir,
+            check=True,
+            capture_output=True
+        )
+
+        # Commit with message
+        subprocess.run(
+            ['git', 'commit', '-m', message],
+            cwd=inventory_dir,
+            check=True,
+            capture_output=True
+        )
+
+        print(f"✅ Git commit: {message}")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        # Ignore errors (e.g., no changes to commit)
+        stderr = e.stderr.decode() if e.stderr else 'no changes'
+        if 'nothing to commit' not in stderr and 'dubious ownership' not in stderr:
+            print(f"ℹ️  Git commit skipped: {stderr}")
+        return False
+    except Exception as e:
+        print(f"⚠️  Git commit failed: {e}")
+        return False
+
+
+def add_child_to_item(container_id: str, parent_item: str, child_description: str) -> dict:
+    """Add a child item to a parent item, promoting the parent to a container if needed."""
+    if not inventory_path:
+        return {"error": "Inventory path not set"}
+
+    markdown_path = inventory_path.parent / "inventory.md"
+    if not markdown_path.exists():
+        return {"error": "inventory.md not found"}
+
+    try:
+        # Read markdown file
+        with open(markdown_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        # Find the parent container
+        container_line_idx = None
+        container_level = None
+        for i, line in enumerate(lines):
+            if (line.startswith('# ') or line.startswith('## ')) and f'ID:{container_id}' in line:
+                container_line_idx = i
+                container_level = '#' if line.startswith('# ') else '##'
+                break
+
+        if container_line_idx is None:
+            return {"error": f"Container ID:{container_id} not found"}
+
+        # Check if parent item already exists as a container (heading)
+        parent_id = None
+        parent_container_idx = None
+
+        # Look for parent as a heading first
+        for i in range(container_line_idx + 1, len(lines)):
+            # Stop at next heading of same or higher level
+            if container_level == '#' and lines[i].startswith('# '):
+                break
+            elif container_level == '##' and (lines[i].startswith('# ') or lines[i].startswith('## ')):
+                break
+
+            # Check if this heading matches the parent item
+            if lines[i].startswith('## ') and parent_item.lower() in lines[i].lower():
+                parent_container_idx = i
+                # Extract ID from heading
+                if 'ID:' in lines[i]:
+                    parent_id = lines[i].split('ID:')[1].split()[0]
+                break
+
+        # If parent not found as heading, look for it as a bullet item
+        parent_bullet_idx = None
+        if parent_container_idx is None:
+            for i in range(container_line_idx + 1, len(lines)):
+                # Stop at next heading
+                if container_level == '#' and lines[i].startswith('# '):
+                    break
+                elif container_level == '##' and (lines[i].startswith('# ') or lines[i].startswith('## ')):
+                    break
+
+                if lines[i].startswith('* ') and parent_item.lower() in lines[i].lower():
+                    parent_bullet_idx = i
+                    break
+
+        # Case 1: Parent is already a container (has heading)
+        if parent_container_idx is not None:
+            # Simply add child to this container
+            result = add_item_to_container(parent_id, child_description, None)
+            if "error" in result:
+                return result
+            return {
+                "success": True,
+                "message": f"Added child '{child_description}' to {parent_id}",
+                "promoted": False
+            }
+
+        # Case 2: Parent is a bullet item - need to promote it
+        if parent_bullet_idx is not None:
+            # Extract or generate ID from parent item
+            parent_text = lines[parent_bullet_idx].strip()[2:]  # Remove "* "
+
+            # Try to extract ID from the item text (e.g., "ID:D01 - description")
+            if 'ID:' in parent_text or 'id:' in parent_text.lower():
+                # Extract ID
+                import re
+                match = re.search(r'[Ii][Dd]:(\S+)', parent_text)
+                if match:
+                    parent_id = match.group(1)
+                    # Remove ID: prefix from description
+                    parent_desc = re.sub(r'[Ii][Dd]:\S+\s*-?\s*', '', parent_text).strip()
+                else:
+                    # Generate ID from first word
+                    parent_id = parent_text.split()[0] if parent_text else 'Item'
+                    parent_desc = parent_text
+            else:
+                # Generate ID from first word or first few characters
+                parent_id = parent_text.split()[0][:10] if parent_text else 'Item'
+                parent_desc = parent_text
+
+            # Create new heading for promoted parent
+            new_heading = f"## ID:{parent_id} {parent_desc}\n"
+            new_child_item = f"* {child_description}\n"
+
+            # Insert new heading and child at the bullet position
+            lines[parent_bullet_idx] = new_heading
+            lines.insert(parent_bullet_idx + 1, "\n")
+            lines.insert(parent_bullet_idx + 2, new_child_item)
+            lines.insert(parent_bullet_idx + 3, "\n")
+
+            # Write back
+            with open(markdown_path, 'w', encoding='utf-8') as f:
+                f.writelines(lines)
+
+            # Regenerate JSON and photo listings
+            from inventory_system import parser
+            data = parser.parse_inventory(markdown_path)
+            parser.save_json(data, inventory_path)
+            parser.generate_photo_listings(markdown_path.parent)
+
+            # Reload
+            reload_inventory()
+
+            # Git commit
+            git_commit(f"Promote {parent_id} and add child: {child_description}")
+
+            return {
+                "success": True,
+                "message": f"Promoted '{parent_item}' to container {parent_id} and added child",
+                "promoted": True,
+                "container_id": parent_id
+            }
+
+        return {"error": f"Parent item '{parent_item}' not found in container {container_id}"}
+
+    except Exception as e:
+        return {"error": f"Failed to add child item: {str(e)}"}
+
+
 def add_item_to_container(container_id: str, item_description: str, tags: Optional[str] = None) -> dict:
     """Add an item to a container by modifying the markdown file."""
     if not inventory_path:
@@ -334,10 +551,10 @@ def add_item_to_container(container_id: str, item_description: str, tags: Option
         with open(markdown_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
 
-        # Find the container
+        # Find the container (can be # or ## heading)
         container_line_idx = None
         for i, line in enumerate(lines):
-            if line.startswith('## ') and f'ID:{container_id}' in line:
+            if (line.startswith('# ') or line.startswith('## ')) and f'ID:{container_id}' in line:
                 container_line_idx = i
                 break
 
@@ -365,12 +582,17 @@ def add_item_to_container(container_id: str, item_description: str, tags: Option
         with open(markdown_path, 'w', encoding='utf-8') as f:
             f.writelines(lines)
 
-        # Regenerate JSON
+        # Regenerate JSON and photo listings
         from inventory_system import parser
-        parser.parse_inventory(markdown_path, output_path=inventory_path)
+        data = parser.parse_inventory(markdown_path)
+        parser.save_json(data, inventory_path)
+        parser.generate_photo_listings(markdown_path.parent)
 
         # Reload inventory data
         reload_inventory()
+
+        # Git commit
+        git_commit(f"Add item to {container_id}: {item_description}")
 
         return {
             "success": True,
@@ -381,6 +603,71 @@ def add_item_to_container(container_id: str, item_description: str, tags: Option
 
     except Exception as e:
         return {"error": f"Failed to add item: {str(e)}"}
+
+
+def remove_container(container_id: str) -> dict:
+    """Remove a container from the inventory by removing its section from the markdown file."""
+    if not inventory_path:
+        return {"error": "Inventory path not set"}
+
+    markdown_path = inventory_path.parent / "inventory.md"
+    if not markdown_path.exists():
+        return {"error": "inventory.md not found"}
+
+    try:
+        # Read markdown file
+        with open(markdown_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        # Find the container section (can be # or ## heading)
+        container_start_idx = None
+        container_level = None
+        for i, line in enumerate(lines):
+            if (line.startswith('# ') or line.startswith('## ')) and f'ID:{container_id}' in line:
+                container_start_idx = i
+                container_level = '#' if line.startswith('# ') else '##'
+                break
+
+        if container_start_idx is None:
+            return {"error": f"Container ID:{container_id} not found"}
+
+        # Find the end of this container (next heading of same or higher level, or end of file)
+        container_end_idx = len(lines)
+        for i in range(container_start_idx + 1, len(lines)):
+            if container_level == '#' and lines[i].startswith('# '):
+                container_end_idx = i
+                break
+            elif container_level == '##' and (lines[i].startswith('# ') or lines[i].startswith('## ')):
+                container_end_idx = i
+                break
+
+        # Remove the container section
+        del lines[container_start_idx:container_end_idx]
+
+        # Write back
+        with open(markdown_path, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+
+        # Regenerate JSON and photo listings
+        from inventory_system import parser
+        data = parser.parse_inventory(markdown_path)
+        parser.save_json(data, inventory_path)
+        parser.generate_photo_listings(markdown_path.parent)
+
+        # Reload
+        reload_inventory()
+
+        # Git commit
+        git_commit(f"Remove container {container_id}")
+
+        return {
+            "success": True,
+            "message": f"Removed container {container_id}",
+            "container_id": container_id
+        }
+
+    except Exception as e:
+        return {"error": f"Failed to remove container: {str(e)}"}
 
 
 def remove_item_from_container(container_id: str, item_description: str) -> dict:
@@ -397,11 +684,13 @@ def remove_item_from_container(container_id: str, item_description: str) -> dict
         with open(markdown_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
 
-        # Find the container section
+        # Find the container section (can be # or ## heading)
         container_line_idx = None
+        container_level = None
         for i, line in enumerate(lines):
-            if line.startswith('## ') and f'ID:{container_id}' in line:
+            if (line.startswith('# ') or line.startswith('## ')) and f'ID:{container_id}' in line:
                 container_line_idx = i
+                container_level = '#' if line.startswith('# ') else '##'
                 break
 
         if container_line_idx is None:
@@ -410,7 +699,13 @@ def remove_item_from_container(container_id: str, item_description: str) -> dict
         # Find and remove the item
         item_removed = False
         i = container_line_idx + 1
-        while i < len(lines) and not lines[i].startswith('## '):
+        while i < len(lines):
+            # Stop at next heading of same or higher level
+            if container_level == '#' and lines[i].startswith('# '):
+                break
+            elif container_level == '##' and (lines[i].startswith('# ') or lines[i].startswith('## ')):
+                break
+
             if lines[i].startswith('* ') and item_description.lower() in lines[i].lower():
                 del lines[i]
                 item_removed = True
@@ -424,12 +719,17 @@ def remove_item_from_container(container_id: str, item_description: str) -> dict
         with open(markdown_path, 'w', encoding='utf-8') as f:
             f.writelines(lines)
 
-        # Regenerate JSON
+        # Regenerate JSON and photo listings
         from inventory_system import parser
-        parser.parse_inventory(markdown_path, output_path=inventory_path)
+        data = parser.parse_inventory(markdown_path)
+        parser.save_json(data, inventory_path)
+        parser.generate_photo_listings(markdown_path.parent)
 
         # Reload
         reload_inventory()
+
+        # Git commit
+        git_commit(f"Remove item from {container_id}: {item_description}")
 
         return {
             "success": True,
@@ -439,6 +739,50 @@ def remove_item_from_container(container_id: str, item_description: str) -> dict
 
     except Exception as e:
         return {"error": f"Failed to remove item: {str(e)}"}
+
+
+def add_todo(task_description: str, priority: str = "medium") -> dict:
+    """Add a task or change request to TODO.md."""
+    if not inventory_path:
+        return {"error": "Inventory path not set"}
+
+    todo_path = inventory_path.parent / "TODO.md"
+
+    try:
+        # Read existing TODO.md or create new one
+        if todo_path.exists():
+            with open(todo_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        else:
+            content = "# TODO\n\nInventory change requests and tasks.\n\n"
+
+        # Add timestamp
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        # Format priority marker
+        priority_marker = {
+            "high": "🔴",
+            "medium": "🟡",
+            "low": "🟢"
+        }.get(priority, "🟡")
+
+        # Append new task
+        new_task = f"\n## {priority_marker} {timestamp}\n\n{task_description}\n"
+        content += new_task
+
+        # Write back
+        with open(todo_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+        return {
+            "success": True,
+            "message": f"Added task to TODO.md with priority: {priority}",
+            "task": task_description
+        }
+
+    except Exception as e:
+        return {"error": f"Failed to add TODO: {str(e)}"}
 
 
 def execute_tool(tool_name: str, tool_input: dict) -> dict:
@@ -463,6 +807,11 @@ def execute_tool(tool_name: str, tool_input: dict) -> dict:
         return remove_item_from_container(
             container_id=tool_input['container_id'],
             item_description=tool_input['item_description']
+        )
+    elif tool_name == "add_todo":
+        return add_todo(
+            task_description=tool_input['task_description'],
+            priority=tool_input.get('priority', 'medium')
         )
     else:
         return {"error": f"Unknown tool: {tool_name}"}
@@ -500,6 +849,7 @@ You have access to tools to:
 - List containers
 - **Add items** to containers
 - **Remove items** from containers
+- **Add tasks to TODO.md** for complex changes you cannot handle directly
 
 When users ask about their inventory:
 1. Use the appropriate tools to find information
@@ -510,9 +860,18 @@ When users ask about their inventory:
 6. Match the user's language (respond in the same language they use)
 
 When users want to modify the inventory:
-1. Confirm what they want to do
-2. Use add_item or remove_item tools
-3. Confirm the change was successful
+1. For simple changes (add/remove items): Use add_item or remove_item tools directly
+2. For complex changes you CANNOT handle (moving photos between containers, reorganizing structure, changing container metadata, moving physical items): Use add_todo to create a task
+3. Always confirm what was done
+
+IMPORTANT: If a user asks you to do something that requires:
+- Moving photo directories between containers
+- Reorganizing container structure
+- Changing container headings or metadata
+- Moving physical items between containers
+- System or design changes
+
+Use the add_todo tool to record the request in TODO.md. Explain to the user that this requires manual intervention and you've added it to the TODO list.
 
 Important notes:
 - Container IDs like A23, H11, C04 refer to physical boxes/containers
@@ -571,13 +930,117 @@ Important notes:
     )
 
 
+@app.get("/api/containers")
+async def list_containers_api() -> dict:
+    """List all containers for dropdown selection."""
+    if not inventory_data:
+        raise HTTPException(status_code=500, detail="Inventory not loaded")
+
+    containers = [{
+        'id': c['id'],
+        'heading': c.get('heading', ''),
+        'parent': c.get('parent', '')
+    } for c in inventory_data.get('containers', [])]
+
+    return {"containers": sorted(containers, key=lambda x: x['id'])}
+
+
+@app.post("/api/items")
+async def add_item_api(container_id: str = Form(...), item_description: str = Form(...), tags: str = Form("")) -> dict:
+    """Add an item to a container (mobile-friendly endpoint)."""
+    result = add_item_to_container(container_id, item_description, tags if tags else None)
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    return result
+
+
+@app.post("/api/items/add-child")
+async def add_child_item_api(container_id: str = Form(...), parent_item: str = Form(...), child_description: str = Form(...)) -> dict:
+    """Add a child item to a parent item (promotes parent to container if needed)."""
+    result = add_child_to_item(container_id, parent_item, child_description)
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    return result
+
+
+@app.delete("/api/items")
+async def remove_item_api(container_id: str, item_description: str) -> dict:
+    """Remove an item from a container (mobile-friendly endpoint)."""
+    result = remove_item_from_container(container_id, item_description)
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    return result
+
+
+@app.delete("/api/containers")
+async def remove_container_api(container_id: str) -> dict:
+    """Remove an entire container from the inventory."""
+    result = remove_container(container_id)
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    return result
+
+
+@app.post("/api/photos")
+async def upload_photo(container_id: str = Form(...), photo: UploadFile = File(...)) -> dict:
+    """Upload a photo to a container."""
+    if not inventory_path:
+        raise HTTPException(status_code=500, detail="Inventory path not set")
+
+    # Validate file type
+    allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.JPG', '.JPEG', '.PNG', '.GIF'}
+    file_ext = Path(photo.filename).suffix
+    if file_ext not in allowed_extensions:
+        raise HTTPException(status_code=400, detail="Invalid file type. Only images allowed.")
+
+    # Create photos directory if it doesn't exist
+    photos_dir = inventory_path.parent / "photos" / container_id
+    photos_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save photo
+    photo_path = photos_dir / photo.filename
+    try:
+        with open(photo_path, 'wb') as f:
+            shutil.copyfileobj(photo.file, f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save photo: {str(e)}")
+
+    # Regenerate inventory to discover new photo
+    from inventory_system import parser
+    markdown_path = inventory_path.parent / "inventory.md"
+    data = parser.parse_inventory(markdown_path)
+    parser.save_json(data, inventory_path)
+    parser.generate_photo_listings(markdown_path.parent)
+
+    # Reload inventory
+    reload_inventory()
+
+    # Git commit
+    git_commit(f"Add photo to {container_id}: {photo.filename}")
+
+    return {
+        "success": True,
+        "message": f"Photo {photo.filename} uploaded to {container_id}",
+        "photo_path": f"photos/{container_id}/{photo.filename}"
+    }
+
+
 @app.get("/health")
 async def health() -> dict:
     """Health check endpoint."""
     return {
         "status": "ok",
         "inventory_loaded": inventory_data is not None,
-        "container_count": len(inventory_data.get('containers', [])) if inventory_data else 0
+        "container_count": len(inventory_data.get('containers', [])) if inventory_data else 0,
+        "chat_available": bool(os.environ.get("ANTHROPIC_API_KEY"))
     }
 
 

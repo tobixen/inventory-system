@@ -7,8 +7,8 @@ INVENTORY_PATH=/path/to/your/inventory
 # Web server port
 WEB_PORT=8000
 
-# Chat server port
-CHAT_PORT=8765
+# API server port
+API_PORT=8765
 
-# Anthropic API key for chatbot
+# Anthropic API key for Claude chat
 ANTHROPIC_API_KEY=

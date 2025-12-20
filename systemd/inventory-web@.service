@@ -15,7 +15,8 @@ RestartSec=5s
 # Security
 NoNewPrivileges=true
 PrivateTmp=true
-ReadOnlyPaths=${INVENTORY_PATH}
+# Note: Add ReadOnlyPaths manually in the deployed service if needed
+# Example: ReadOnlyPaths=/home/user/inventory (systemd doesn't support ${INVENTORY_PATH})
 
 # Logging
 StandardOutput=journal

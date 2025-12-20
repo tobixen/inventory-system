@@ -151,6 +151,14 @@ def parse_command(md_file: Path, output: Path = None, validate_only: bool = Fals
             parser.save_json(data, output)
             print(f"\n✅ Success! {output} has been updated.")
 
+            # Generate photo directory listings for backup
+            print(f"\n📸 Generating photo directory listings...")
+            containers_processed, files_created = parser.generate_photo_listings(md_file.parent)
+            if files_created > 0:
+                print(f"✅ Created {files_created} photo listing(s) in photo-listings/")
+            else:
+                print(f"   No photos found (photo-listings/ not updated)")
+
             search_html = md_file.parent / 'search.html'
             print(f"\n📱 To view the searchable inventory, open search.html in your browser:")
             print(f"   xdg-open {search_html}")
@@ -200,18 +208,17 @@ def serve_command(directory: Path = None, port: int = 8000) -> int:
             return 0
 
 
-def chat_command(directory: Path = None, port: int = 8765) -> int:
-    """Start the chatbot server for conversational inventory access."""
+def api_command(directory: Path = None, port: int = 8765) -> int:
+    """Start the inventory API server (chat, photo upload, item management)."""
     import os
 
-    # Check for API key
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("❌ ANTHROPIC_API_KEY environment variable not set")
-        print("\nTo use the chatbot, you need a Claude API key from Anthropic.")
-        print("Get one at: https://console.anthropic.com/")
-        print("\nThen set it:")
-        print("  export ANTHROPIC_API_KEY='your-key-here'")
-        return 1
+    # Check for API key (optional - chat feature will be disabled if not set)
+    has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if not has_api_key:
+        print("ℹ️  ANTHROPIC_API_KEY not set - chat feature will be disabled")
+        print("   Photo upload and item management will still work")
+        print("\n   To enable chat, get an API key from: https://console.anthropic.com/")
+        print("   Then set it: export ANTHROPIC_API_KEY='your-key-here'\n")
 
     if directory is None:
         directory = Path.cwd()
@@ -228,25 +235,27 @@ def chat_command(directory: Path = None, port: int = 8765) -> int:
         print(f"Run 'inventory-system parse inventory.md' first")
         return 1
 
-    # Change to directory so chat_server can find inventory.json
+    # Change to directory so API server can find inventory.json
     os.chdir(directory)
 
-    print(f"🤖 Starting Inventory Chatbot Server...")
+    print(f"🚀 Starting Inventory API Server...")
     print(f"📂 Using inventory: {inventory_json}")
     print(f"🌐 Server will run at: http://localhost:{port}")
     print(f"💬 Chat endpoint: http://localhost:{port}/chat")
+    print(f"📸 Photo upload: http://localhost:{port}/api/photos")
+    print(f"➕ Add/remove items: http://localhost:{port}/api/items")
     print(f"❤️  Health check: http://localhost:{port}/health")
-    print(f"\nOpen search.html in your browser and click the chat button (💬)")
+    print(f"\nOpen search.html in your browser to use the interface")
     print(f"Press Ctrl+C to stop\n")
 
-    # Import and run the chat server
+    # Import and run the API server
     try:
         import uvicorn
         from .chat_server import app
     except ImportError as e:
         print(f"❌ Missing required package: {e}")
-        print("\nInstall chat dependencies:")
-        print("  pip install fastapi uvicorn anthropic")
+        print("\nInstall API server dependencies:")
+        print("  pip install fastapi uvicorn anthropic python-multipart")
         return 1
 
     try:
@@ -275,8 +284,8 @@ Examples:
   # Start a local web server
   inventory-system serve ~/my-inventory
 
-  # Start chatbot server (requires ANTHROPIC_API_KEY)
-  inventory-system chat ~/my-inventory
+  # Start API server for chat, photos, and item management (requires ANTHROPIC_API_KEY)
+  inventory-system api ~/my-inventory
         """
     )
 
@@ -298,8 +307,13 @@ Examples:
     serve_parser.add_argument('directory', type=Path, nargs='?', help='Directory to serve (default: current directory)')
     serve_parser.add_argument('--port', '-p', type=int, default=8000, help='Port number (default: 8000)')
 
-    # Chat command
-    chat_parser = subparsers.add_parser('chat', help='Start chatbot server (requires ANTHROPIC_API_KEY)')
+    # API command
+    api_parser = subparsers.add_parser('api', help='Start API server (chat, photos, item management)')
+    api_parser.add_argument('directory', type=Path, nargs='?', help='Directory with inventory.json (default: current directory)')
+    api_parser.add_argument('--port', '-p', type=int, default=8765, help='Port number (default: 8765)')
+
+    # Chat command (backwards compatibility alias for 'api')
+    chat_parser = subparsers.add_parser('chat', help='[Deprecated] Use "api" instead')
     chat_parser.add_argument('directory', type=Path, nargs='?', help='Directory with inventory.json (default: current directory)')
     chat_parser.add_argument('--port', '-p', type=int, default=8765, help='Port number (default: 8765)')
 
@@ -311,8 +325,8 @@ Examples:
         return parse_command(args.file, args.output, args.validate)
     elif args.command == 'serve':
         return serve_command(args.directory, args.port)
-    elif args.command == 'chat':
-        return chat_command(args.directory, args.port)
+    elif args.command == 'api' or args.command == 'chat':
+        return api_command(args.directory, args.port)
     else:
         parser_cli.print_help()
         return 1

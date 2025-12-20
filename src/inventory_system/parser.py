@@ -240,17 +240,56 @@ def parse_inventory(md_file: Path) -> Dict[str, Any]:
                 heading_stack = {1: container_id}
 
                 # Create a top-level container
-                result['containers'].append({
+                current_container = {
                     'id': container_id,
                     'parent': None,  # Top-level containers have no parent
-                    'heading': heading,
+                    'heading': parsed['name'],  # Use cleaned name without metadata markers
                     'description': '',
                     'items': [],
                     'images': [],
                     'photos_link': '',
                     'metadata': parsed['metadata']
-                })
-            i += 1
+                }
+
+                i += 1
+
+                # Collect container contents (same as for ## headings)
+                while i < len(lines) and not lines[i].startswith('#'):
+                    line_content = lines[i]
+
+                    # Skip image lines
+                    if line_content.startswith('!['):
+                        i += 1
+                        continue
+                    elif line_content.startswith('* '):
+                        # Item
+                        item_text = line_content[2:].strip()
+                        parsed_item = extract_metadata(item_text)
+
+                        # If this item has an ID, infer parent relationship
+                        if parsed_item['metadata'].get('id'):
+                            item_id = parsed_item['metadata']['id']
+                            if container_id and item_id != container_id:
+                                inferred_parents[item_id] = container_id
+
+                        current_container['items'].append({
+                            'name': parsed_item['name'],
+                            'raw_text': item_text,
+                            'metadata': parsed_item['metadata'],
+                            'indented': False
+                        })
+                    elif line_content.strip() and not line_content.startswith('#'):
+                        # Description line
+                        if not current_container['description']:
+                            current_container['description'] = line_content.strip()
+                        else:
+                            current_container['description'] += ' ' + line_content.strip()
+
+                    i += 1
+
+                result['containers'].append(current_container)
+            else:
+                i += 1
             continue
 
         elif line.startswith('# ') and not line.startswith('## '):
@@ -277,18 +316,55 @@ def parse_inventory(md_file: Path) -> Dict[str, Any]:
                 heading_stack = {1: container_id}
 
                 # Create a top-level container
-                result['containers'].append({
+                current_container = {
                     'id': container_id,
                     'parent': None,
-                    'heading': heading,
+                    'heading': parsed['name'],  # Use cleaned name without metadata markers
                     'description': '',
                     'items': [],
                     'images': [],
                     'photos_link': '',
                     'metadata': parsed['metadata']
-                })
-            i += 1
-            continue
+                }
+
+                i += 1
+
+                # Collect container contents (same as for ## headings)
+                while i < len(lines) and not lines[i].startswith('#'):
+                    line_content = lines[i]
+
+                    # Skip image lines
+                    if line_content.startswith('!['):
+                        i += 1
+                        continue
+                    elif line_content.startswith('* '):
+                        # Item
+                        item_text = line_content[2:].strip()
+                        parsed_item = extract_metadata(item_text)
+
+                        # If this item has an ID, infer parent relationship
+                        if parsed_item['metadata'].get('id'):
+                            item_id = parsed_item['metadata']['id']
+                            if container_id and item_id != container_id:
+                                inferred_parents[item_id] = container_id
+
+                        current_container['items'].append({
+                            'name': parsed_item['name'],
+                            'raw_text': item_text,
+                            'metadata': parsed_item['metadata'],
+                            'indented': False
+                        })
+                    elif line_content.strip() and not line_content.startswith('#'):
+                        # Description line
+                        if not current_container['description']:
+                            current_container['description'] = line_content.strip()
+                        else:
+                            current_container['description'] += ' ' + line_content.strip()
+
+                    i += 1
+
+                result['containers'].append(current_container)
+                continue
 
         elif line.startswith('# Oversikt over'):
             # Section header without ID - just skip it
@@ -348,7 +424,7 @@ def parse_inventory(md_file: Path) -> Dict[str, Any]:
             current_container = {
                 'id': container_id,
                 'parent': parent_id,
-                'heading': heading,
+                'heading': parsed['name'],  # Use cleaned name without metadata markers
                 'description': '',
                 'items': [],
                 'images': [],
@@ -579,3 +655,60 @@ def load_json(json_file: Path) -> Dict[str, Any]:
     """Load inventory data from JSON file."""
     with open(json_file, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+
+def generate_photo_listings(base_path: Path) -> Tuple[int, int]:
+    """
+    Generate photo directory listings for backup purposes.
+
+    Scans photos/* directories and creates photo-listings/{container_id}.txt
+    files containing lists of photo filenames (not paths, just filenames).
+
+    Args:
+        base_path: Base directory containing photos/ folder
+
+    Returns:
+        Tuple of (containers_processed, files_created)
+    """
+    photos_dir = base_path / 'photos'
+    listings_dir = base_path / 'photo-listings'
+
+    if not photos_dir.exists():
+        print(f"⚠️  No photos directory found at {photos_dir}")
+        return 0, 0
+
+    # Create listings directory if needed
+    listings_dir.mkdir(exist_ok=True)
+
+    containers_processed = 0
+    files_created = 0
+
+    # Image extensions to look for
+    extensions = ('.jpg', '.jpeg', '.png', '.gif', '.JPG', '.JPEG', '.PNG', '.GIF')
+
+    # Process each subdirectory in photos/
+    for container_dir in sorted(photos_dir.iterdir()):
+        if not container_dir.is_dir():
+            continue
+
+        container_id = container_dir.name
+
+        # Get all image files, sorted by name
+        photo_files = sorted([
+            f.name for f in container_dir.iterdir()
+            if f.is_file() and f.name.endswith(extensions)
+        ])
+
+        if not photo_files:
+            # Skip empty directories
+            continue
+
+        # Write listing file
+        listing_file = listings_dir / f"{container_id}.txt"
+        with open(listing_file, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(photo_files) + '\n')
+
+        containers_processed += 1
+        files_created += 1
+
+    return containers_processed, files_created
