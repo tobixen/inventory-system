@@ -2,7 +2,7 @@
 
 A flexible markdown-based inventory management system with web UI.
 
-Disclaimer: This is "vibe coded", more or less.  I will ensure it works well for two actual inventories, then make a demo and release it.
+Disclaimer: This is "vibe coded", more or less.  I will ensure it works well for two actual inventories, then make a demo and release a v1.0.
 
 ## Features
 
