@@ -373,30 +373,41 @@ def git_commit(message: str) -> bool:
             except:
                 pass  # May already be added
 
-        # Add all changes (inventory.md, inventory.json, photo-listings/, photos/)
+        # Add changes (inventory.md, inventory.json, photo-listings/, resized/)
+        # Note: photos/ is typically in .gitignore and should not be added
         subprocess.run(
-            ['git', 'add', 'inventory.md', 'inventory.json', 'photo-listings/', 'photos/'],
+            ['git', 'add', 'inventory.md', 'inventory.json', 'photo-listings/', 'resized/'],
             cwd=inventory_dir,
-            check=True,
+            check=False,  # Don't fail if some files don't exist
             capture_output=True
         )
 
         # Commit with message
-        subprocess.run(
+        result = subprocess.run(
             ['git', 'commit', '-m', message],
             cwd=inventory_dir,
-            check=True,
             capture_output=True
         )
 
-        print(f"✅ Git commit: {message}")
-        return True
+        if result.returncode == 0:
+            print(f"✅ Git commit: {message}")
+            return True
+        else:
+            # Check if it's just "nothing to commit"
+            stderr = result.stderr.decode() if result.stderr else ''
+            stdout = result.stdout.decode() if result.stdout else ''
+            output = stderr + stdout
+            if 'nothing to commit' in output or 'no changes added' in output:
+                print(f"ℹ️  Git commit skipped: no changes")
+                return True  # Not an error
+            else:
+                print(f"ℹ️  Git commit skipped: {output.strip()}")
+                return False
 
     except subprocess.CalledProcessError as e:
-        # Ignore errors (e.g., no changes to commit)
-        stderr = e.stderr.decode() if e.stderr else 'no changes'
-        if 'nothing to commit' not in stderr and 'dubious ownership' not in stderr:
-            print(f"ℹ️  Git commit skipped: {stderr}")
+        # Should not happen since we use check=False, but keep for safety
+        stderr = e.stderr.decode() if e.stderr else 'unknown error'
+        print(f"ℹ️  Git commit skipped: {stderr}")
         return False
     except Exception as e:
         print(f"⚠️  Git commit failed: {e}")
