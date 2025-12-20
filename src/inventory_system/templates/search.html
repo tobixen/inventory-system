@@ -441,6 +441,107 @@
             user-select: none;
         }
 
+        /* Error Modal */
+        .error-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .error-modal.active {
+            display: flex;
+        }
+
+        .error-modal-content {
+            background: white;
+            padding: 24px;
+            border-radius: 8px;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .error-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .error-modal-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #d32f2f;
+        }
+
+        .error-modal-close {
+            font-size: 28px;
+            cursor: pointer;
+            color: #666;
+            line-height: 1;
+            user-select: none;
+        }
+
+        .error-modal-close:hover {
+            color: #333;
+        }
+
+        .error-modal-message {
+            background: #ffebee;
+            border-left: 4px solid #d32f2f;
+            padding: 12px;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            word-break: break-word;
+            user-select: text;
+            cursor: text;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .error-modal-actions {
+            margin-top: 16px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .error-modal-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .error-modal-btn-copy {
+            background: #2196f3;
+            color: white;
+        }
+
+        .error-modal-btn-copy:hover {
+            background: #1976d2;
+        }
+
+        .error-modal-btn-close {
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .error-modal-btn-close:hover {
+            background: #e0e0e0;
+        }
+
         .parent-link {
             color: #3498db;
             text-decoration: none;
@@ -581,6 +682,21 @@
         <span class="lightbox-nav lightbox-next" onclick="navigateLightbox(1)">›</span>
         <img id="lightboxImg" src="" alt="">
         <div class="lightbox-info" id="lightboxInfo"></div>
+    </div>
+
+    <!-- Error Modal -->
+    <div class="error-modal" id="errorModal">
+        <div class="error-modal-content">
+            <div class="error-modal-header">
+                <div class="error-modal-title">❌ Feil</div>
+                <span class="error-modal-close" onclick="closeErrorModal()">&times;</span>
+            </div>
+            <div class="error-modal-message" id="errorMessage"></div>
+            <div class="error-modal-actions">
+                <button class="error-modal-btn error-modal-btn-copy" onclick="copyErrorMessage()">📋 Kopier</button>
+                <button class="error-modal-btn error-modal-btn-close" onclick="closeErrorModal()">Lukk</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -1004,7 +1120,7 @@
                         } else {
                             console.error(`Container ${containerId} not found in DOM after clearing filters`);
                             console.log('Available containers:', Array.from(document.querySelectorAll('[data-container-id]')).map(el => el.dataset.containerId));
-                            alert(`Container ${containerId} ikke funnet`);
+                            showError(`Container ${containerId} ikke funnet`);
                         }
                     }, 200);
                 });
@@ -1381,6 +1497,46 @@
             document.getElementById('lightbox').classList.remove('active');
             currentLightboxIndex = -1;
         }
+
+        // Error Modal Functions
+        function showError(message) {
+            const errorModal = document.getElementById('errorModal');
+            const errorMessage = document.getElementById('errorMessage');
+            errorMessage.textContent = message;
+            errorModal.classList.add('active');
+        }
+
+        function closeErrorModal() {
+            document.getElementById('errorModal').classList.remove('active');
+        }
+
+        function copyErrorMessage() {
+            const errorMessage = document.getElementById('errorMessage').textContent;
+            navigator.clipboard.writeText(errorMessage).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✅ Kopiert!';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+            });
+        }
+
+        // Close error modal on background click
+        document.getElementById('errorModal').addEventListener('click', (e) => {
+            if (e.target.id === 'errorModal') {
+                closeErrorModal();
+            }
+        });
+
+        // Close error modal on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeErrorModal();
+            }
+        });
 
         // Search functionality with debouncing
         document.getElementById('searchBox').addEventListener('input', (e) => {
