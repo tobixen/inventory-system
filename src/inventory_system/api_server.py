@@ -391,6 +391,26 @@ def git_commit(message: str) -> bool:
 
         if result.returncode == 0:
             print(f"✅ Git commit: {message}")
+
+            # Try to push to remote
+            push_result = subprocess.run(
+                ['git', 'push'],
+                cwd=inventory_dir,
+                capture_output=True
+            )
+
+            if push_result.returncode == 0:
+                print(f"✅ Git push successful")
+            else:
+                # Push failed - log but don't fail the operation
+                stderr = push_result.stderr.decode() if push_result.stderr else ''
+                if 'rejected' in stderr or 'non-fast-forward' in stderr:
+                    print(f"⚠️  Git push rejected - pull needed. Resolve conflicts on laptop.")
+                elif 'No configured push destination' in stderr or 'no upstream' in stderr:
+                    print(f"ℹ️  No git remote configured - commits are local only")
+                else:
+                    print(f"ℹ️  Git push failed: {stderr.strip()}")
+
             return True
         else:
             # Check if it's just "nothing to commit"
@@ -828,7 +848,7 @@ def execute_tool(tool_name: str, tool_input: dict) -> dict:
         return {"error": f"Unknown tool: {tool_name}"}
 
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/api/chat", response_model=ChatResponse)
 async def chat(message: ChatMessage) -> ChatResponse:
     """Handle chat messages and return Claude's response."""
 
