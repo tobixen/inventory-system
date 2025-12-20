@@ -1,0 +1,28 @@
+[Unit]
+Description=Inventory API Server (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=inventory-%i
+Group=inventory-%i
+EnvironmentFile=/etc/inventory-system/%i.conf
+Environment="ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}"
+ExecStart=/opt/inventory-system/venv/bin/inventory-system api ${INVENTORY_PATH} --port ${API_PORT}
+Restart=on-failure
+RestartSec=5s
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+# Note: ReadOnlyPaths not used because API server needs write access to inventory directory
+# for photo uploads, item management, and regenerating inventory.json
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=inventory-api-%i
+
+[Install]
+WantedBy=multi-user.target
