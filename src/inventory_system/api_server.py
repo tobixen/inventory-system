@@ -172,6 +172,32 @@ INVENTORY_TOOLS = [
         }
     },
     {
+        "name": "move_item",
+        "description": "Move an item from one container to another. This removes the item from the source container and adds it to the destination container.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_container_id": {
+                    "type": "string",
+                    "description": "The container ID to move the item from (e.g., 'A23', 'H11')"
+                },
+                "destination_container_id": {
+                    "type": "string",
+                    "description": "The container ID to move the item to (e.g., 'B05', 'C12')"
+                },
+                "item_description": {
+                    "type": "string",
+                    "description": "Description of the item to move (or part of it)"
+                },
+                "tags": {
+                    "type": "string",
+                    "description": "Optional comma-separated tags for the item in the new location"
+                }
+            },
+            "required": ["source_container_id", "destination_container_id", "item_description"]
+        }
+    },
+    {
         "name": "add_todo",
         "description": "Add a change request or task to TODO.md. Use this when a request is too complex to handle directly or requires manual intervention (e.g., moving photos, reorganizing containers, complex metadata changes).",
         "input_schema": {
@@ -728,7 +754,7 @@ def remove_item_from_container(container_id: str, item_description: str) -> dict
             return {"error": f"Container ID:{container_id} not found"}
 
         # Find and remove the item
-        item_removed = False
+        removed_item_text = None
         i = container_line_idx + 1
         while i < len(lines):
             # Stop at next heading of same or higher level
@@ -738,12 +764,13 @@ def remove_item_from_container(container_id: str, item_description: str) -> dict
                 break
 
             if lines[i].startswith('* ') and item_description.lower() in lines[i].lower():
+                # Save the actual item text (strip the "* " prefix and newline)
+                removed_item_text = lines[i][2:].strip()
                 del lines[i]
-                item_removed = True
                 break
             i += 1
 
-        if not item_removed:
+        if removed_item_text is None:
             return {"error": f"Item '{item_description}' not found in container {container_id}"}
 
         # Write back
@@ -760,12 +787,13 @@ def remove_item_from_container(container_id: str, item_description: str) -> dict
         reload_inventory()
 
         # Git commit
-        git_commit(f"Remove item from {container_id}: {item_description}")
+        git_commit(f"Remove item from {container_id}: {removed_item_text[:50]}")
 
         return {
             "success": True,
-            "message": f"Removed '{item_description}' from container {container_id}",
-            "container_id": container_id
+            "message": f"Removed '{removed_item_text}' from container {container_id}",
+            "container_id": container_id,
+            "removed_item": removed_item_text
         }
 
     except Exception as e:
@@ -806,14 +834,45 @@ def add_todo(task_description: str, priority: str = "medium") -> dict:
         with open(todo_path, 'w', encoding='utf-8') as f:
             f.write(content)
 
+        # Commit to git
+        git_commit(f"Add TODO: {task_description[:50]}{'...' if len(task_description) > 50 else ''}")
+
         return {
             "success": True,
-            "message": f"Added task to TODO.md with priority: {priority}",
+            "message": f"Added task to TODO.md with priority: {priority} (committed to git)",
             "task": task_description
         }
 
     except Exception as e:
         return {"error": f"Failed to add TODO: {str(e)}"}
+
+
+def move_item(source_container_id: str, destination_container_id: str, item_description: str, tags: str | None = None) -> dict:
+    """Move an item from one container to another."""
+    # First, remove from source
+    remove_result = remove_item_from_container(source_container_id, item_description)
+    if "error" in remove_result:
+        return {"error": f"Failed to remove item from {source_container_id}: {remove_result['error']}"}
+
+    # Get the actual removed item text (in case it was a partial match)
+    removed_item = remove_result.get("removed_item", item_description)
+
+    # Then add to destination
+    add_result = add_item_to_container(destination_container_id, removed_item, tags)
+    if "error" in add_result:
+        # Try to restore the item to the source container
+        restore_result = add_item_to_container(source_container_id, removed_item, None)
+        if "error" in restore_result:
+            return {"error": f"Failed to add item to {destination_container_id} and could not restore: {add_result['error']}"}
+        return {"error": f"Failed to add item to {destination_container_id}, restored to {source_container_id}: {add_result['error']}"}
+
+    return {
+        "success": True,
+        "message": f"Moved '{removed_item}' from {source_container_id} to {destination_container_id}",
+        "source": source_container_id,
+        "destination": destination_container_id,
+        "item": removed_item
+    }
 
 
 def execute_tool(tool_name: str, tool_input: dict) -> dict:
@@ -838,6 +897,13 @@ def execute_tool(tool_name: str, tool_input: dict) -> dict:
         return remove_item_from_container(
             container_id=tool_input['container_id'],
             item_description=tool_input['item_description']
+        )
+    elif tool_name == "move_item":
+        return move_item(
+            source_container_id=tool_input['source_container_id'],
+            destination_container_id=tool_input['destination_container_id'],
+            item_description=tool_input['item_description'],
+            tags=tool_input.get('tags')
         )
     elif tool_name == "add_todo":
         return add_todo(
@@ -892,17 +958,23 @@ When users ask about their inventory:
 
 When users want to modify the inventory:
 1. For simple changes (add/remove items): Use add_item or remove_item tools directly
-2. For complex changes you CANNOT handle (moving photos between containers, reorganizing structure, changing container metadata, moving physical items): Use add_todo to create a task
-3. Always confirm what was done
+2. For moving items between containers: Use remove_item from the source, then add_item to the destination (or use move_item if available)
+3. For complex changes you CANNOT handle (moving photos between containers, reorganizing container structure, changing container metadata): Use add_todo to create a task
+4. Always confirm what was done and mention that it has been committed to git
 
 IMPORTANT: If a user asks you to do something that requires:
 - Moving photo directories between containers
-- Reorganizing container structure
+- Reorganizing container structure (merging/splitting containers)
 - Changing container headings or metadata
-- Moving physical items between containers
 - System or design changes
 
 Use the add_todo tool to record the request in TODO.md. Explain to the user that this requires manual intervention and you've added it to the TODO list.
+
+You CAN directly handle:
+- Moving items/boxes between containers (use remove_item + add_item, or move_item)
+- Adding new items
+- Removing items
+- Searching and querying
 
 Important notes:
 - Container IDs like A23, H11, C04 refer to physical boxes/containers

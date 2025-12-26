@@ -22,6 +22,9 @@ chat = [
     "anthropic>=0.39.0",
     "python-multipart>=0.0.6",
 ]
+dev = [
+    "pytest>=7.0.0",
+]
 
 [project.scripts]
 inventory-system = "inventory_system.cli:main"
