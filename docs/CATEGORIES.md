@@ -83,15 +83,18 @@ The category system provides hierarchical classification for inventory items usi
 
 - **Parser support** - `category:path/to/concept` syntax in inventory.md
 - **Vocabulary module** - `src/inventory_md/vocabulary.py` for building category trees
-- **SKOS module** - `src/inventory_md/skos.py` for AGROVOC/DBpedia lookups
-- **Oxigraph integration** - Local AGROVOC database for fast queries (~7M triples)
+- **Tingbok lookups** - cross-language label/concept resolution and SKOS source
+  enrichment (AGROVOC/DBpedia/Wikidata/OFF) are delegated to the
+  [tingbok](https://tingbok.plann.no) service. inventory-md no longer ships its own
+  local SKOS client or AGROVOC/Oxigraph database; the historical `skos` subcommand
+  and `parse --skos`/`--hierarchy` flags are gone.
 - **CLI commands**:
-  - `inventory-md parse --skos` - Enrich categories with SKOS lookups
-  - `inventory-md skos expand <term>` - Expand terms to hierarchy paths
-  - `inventory-md skos lookup <term>` - Look up single concept details
-  - `inventory-md vocabulary list/lookup/tree` - Manage local vocabulary
-- **Configuration** - `skos.enabled`, `skos.hierarchy_mode`, `skos.languages` in config file
-- **CLI hierarchy mode** - `inventory-md parse --hierarchy` expands labels to full SKOS paths
+  - `inventory-md parse` - Parses inventory and enriches categories via tingbok
+    automatically when a `tingbok.url` is configured
+  - `inventory-md vocabulary lookup <term>` - Look up a concept by label (local
+    `vocabulary.json`, falling back to a tingbok query; supports `--lang`)
+  - `inventory-md vocabulary list/tree/search` - Inspect the local vocabulary
+- **Configuration** - `tingbok.url` in the config file (see also `lang`)
 - **Category mappings** - `vocabulary.json` includes `categoryMappings` for search expansion
 - **search.html category browser** - Collapsible tree UI with expand/collapse, counts, search
 - **Conditional category UI** - Category browser hidden when vocabulary.json missing or empty
@@ -152,28 +155,26 @@ All food items end up under a unified "food" root, enabling "show all food" quer
 Create `inventory-md.yaml` in your inventory directory:
 
 ```yaml
-lang: en
+lang: nb                 # Inventory language; used as the tingbok lookup language
 
-skos:
-  enabled: true          # Enable SKOS lookups in parse --auto
-  languages: ["en", "nb"]  # Languages for category labels
+tingbok:
+  url: https://tingbok.plann.no  # Category/EAN lookup service (set to "" to disable)
 ```
 
 ### CLI Commands
 
 ```bash
-# Parse with SKOS enrichment
-inventory-md parse inventory.md --skos
+# Parse inventory (categories enriched via tingbok when tingbok.url is configured)
+inventory-md parse inventory.md
 
 # Auto-detect files and use config
 inventory-md parse --auto
 
-# Expand a term to SKOS hierarchy
-inventory-md skos expand potato
-# → food/plant_products/vegetables/root_vegetables/potato
+# Look up a concept by label (shows its broader/hierarchy)
+inventory-md vocabulary lookup potato
 
-# Look up concept details
-inventory-md skos lookup hammer
+# --lang sets the language for the tingbok query (matters for non-English terms)
+inventory-md vocabulary lookup potet --lang nb
 
 # Show category tree
 inventory-md vocabulary tree
@@ -185,12 +186,10 @@ inventory-md vocabulary tree
 
 | File | Purpose |
 |------|---------|
-| `src/inventory_md/vocabulary.py` | Category tree building, path normalization, multi-location loading |
-| `src/inventory_md/skos.py` | AGROVOC/DBpedia SPARQL client, Oxigraph |
-| `src/inventory_md/off.py` | Open Food Facts taxonomy client |
+| `src/inventory_md/vocabulary.py` | Category tree building, path normalization, multi-location loading, tingbok lookups |
 | `src/inventory_md/parser.py` | Parse `category:` syntax from markdown |
-| `src/inventory_md/cli.py` | CLI commands for parse, skos, vocabulary |
-| `src/inventory_md/config.py` | Configuration with skos.enabled, language_fallbacks |
+| `src/inventory_md/cli.py` | CLI commands for parse, vocabulary, etc. |
+| `src/inventory_md/config.py` | Configuration (`tingbok.url`, `lang`, ...) |
 | `src/inventory_md/data/vocabulary.yaml` | Package default vocabulary (shipped) |
 | `~/.config/inventory-md/vocabulary.yaml` | User vocabulary overrides |
 | `./vocabulary.yaml` or `./local-vocabulary.yaml` | Instance-specific vocabulary |
@@ -204,39 +203,30 @@ inventory-md vocabulary tree
 
 ### Data Sources
 
-1. **Open Food Facts (OFF)** - Primary source for food items
-   - Local taxonomy via `openfoodfacts` Python package
-   - ~14K category nodes with localized names
-   - Paths normalized to avoid duplicates (e.g., `food/foods` → `food`)
-   - Has translations for many languages
+External taxonomy sources are no longer queried directly by inventory-md. The
+[tingbok](https://tingbok.plann.no) service is the single authority for resolving a
+category label to a concept and for enriching it from the public SKOS sources it
+aggregates — currently **Open Food Facts**, **AGROVOC**, **DBpedia** and **Wikidata**.
+inventory-md sends labels (with the inventory's `lang`) to tingbok and caches the
+results in the generated `vocabulary.json`. See the tingbok project for how each
+source is queried, merged and filtered.
 
-2. **AGROVOC** (FAO agricultural vocabulary)
-   - Local Oxigraph database: `~/.cache/inventory-md/skos/agrovoc.nt.gz`
-   - ~7M triples, loads in ~35s, then queries are fast
-   - Good for food, agriculture, plants, animals
-   - Has Norwegian (nb) labels
+inventory-md still owns the **local/global vocabulary** layer:
 
-3. **DBpedia** (Wikipedia structured data)
-   - Remote SPARQL endpoint
-   - Uses both `gold:hypernym` (is-a) and `dct:subject` (category) relations
-   - Good for general concepts: tools, electronics, books
-   - No Norwegian labels
-
-4. **Global Vocabulary** - Merged from multiple locations
-   - Package default + system + user + instance-specific
-   - Takes precedence over external sources
-   - Maps orphan categories to proper parents
+- **Global Vocabulary** - Merged from multiple locations
+  - Package default + system + user + instance-specific
+  - Takes precedence over tingbok-resolved concepts
+  - Maps orphan categories to proper parents
 
 ### Priority Logic
 
-In hierarchy mode (`--hierarchy`), sources are checked in this order:
+When resolving a category label:
 
-1. **Global vocabulary** - If label matches a local concept (by ID or altLabel)
-2. **Open Food Facts** - For food-related terms
-3. **AGROVOC** - For agricultural/food terms not found in OFF
-4. **DBpedia** - Fallback for general concepts
-
-Local vocabulary always takes precedence, allowing users to override external mappings.
+1. **Local/global vocabulary** - If the label matches a local concept (by ID,
+   path alias or altLabel), it wins — letting users override anything from tingbok.
+2. **Tingbok** - Otherwise the label is resolved via the tingbok service (which
+   merges OFF/AGROVOC/DBpedia/Wikidata and applies its own language fallbacks).
+3. **Raw string** - If nothing resolves, the raw category string is kept as-is.
 
 ## Global Vocabulary
 
@@ -280,11 +270,12 @@ Local vocabulary entries take precedence over external source lookups.
 # Run vocabulary tests
 pytest tests/test_vocabulary.py -v
 
-# Test SKOS expansion
-inventory-md skos expand potato carrot hammer
+# Resolve some labels via tingbok
+inventory-md vocabulary lookup potato
+inventory-md vocabulary lookup potet --lang nb
 
-# Test full parse with SKOS
-inventory-md parse inventory.md --skos
+# Full parse (enriches categories via tingbok when tingbok.url is configured)
+inventory-md parse inventory.md
 
 # View generated vocabulary
 cat vocabulary.json | jq '.roots'
@@ -296,6 +287,6 @@ cat vocabulary.json | jq '.roots'
 
 2. **DBpedia lacks Norwegian** - Only AGROVOC has Norwegian labels. DBpedia concepts show English only.
 
-3. **Loading time** - First SKOS query loads Oxigraph (~35s). Subsequent queries are fast.
+3. **Lookup latency** - The first tingbok lookup for an unknown label hits upstream SKOS sources and can be slow; results are cached (locally in `vocabulary.json` and server-side in tingbok), so subsequent lookups are fast.
 
 4. **Path explosion** - AGROVOC can return many paths for one concept. Currently limited to first path found.

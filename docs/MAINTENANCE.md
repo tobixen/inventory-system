@@ -322,7 +322,7 @@ grep -n "^## ID:" inventory.md | sort -t: -k3 | uniq -d -f2
 ### Items Not Appearing in Search
 
 1. Check if item is tagged
-2. Check category spelling — use `inventory-md skos lookup LABEL` to verify resolution
+2. Check category spelling — use `inventory-md vocabulary lookup LABEL` to verify resolution
 3. Regenerate JSON: `inventory-md parse inventory.md`
 
 ### Photos Not Showing
