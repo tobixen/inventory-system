@@ -314,8 +314,12 @@ def resolve_vocabulary_from_tingbok(
 
 
 # =============================================================================
-# LANGUAGE FALLBACK SUPPORT
+# LANGUAGE CODE ALIASES
 # =============================================================================
+#
+# Note: cross-language *fallback* resolution (e.g. trying Danish when a Norwegian
+# label is missing) is intentionally NOT done here — that is the tingbok service's
+# responsibility. inventory-md only handles alias codes for the same language.
 
 # Language code aliases — codes that refer to the same language.
 # Unlike fallbacks (which cross language boundaries), aliases are alternate
@@ -339,94 +343,6 @@ def expand_languages_with_aliases(languages: list[str]) -> list[str]:
             if alias not in expanded:
                 expanded.append(alias)
     return expanded
-
-
-# Default language fallback chains (can be overridden via config)
-DEFAULT_LANGUAGE_FALLBACKS: dict[str, list[str]] = {
-    # Scandinavian - mutually intelligible cluster
-    "nb": ["no", "da", "nn", "sv"],
-    "nn": ["no", "nb", "sv", "da"],
-    "da": ["no", "nb", "sv", "nn"],
-    "sv": ["no", "nb", "da", "nn"],
-    "no": ["nb", "da", "nn", "sv"],
-    # Germanic
-    "de": ["de-AT", "de-CH", "nl"],
-    "nl": ["de"],
-    # Romance
-    "es": ["pt", "it", "fr"],
-    "pt": ["es", "it", "fr"],
-    "fr": ["es", "it", "pt"],
-    "it": ["es", "fr", "pt"],
-    # Slavic
-    "ru": ["uk", "be", "bg"],
-    "uk": ["ru", "be", "pl"],
-    "pl": ["cs", "sk"],
-    "cs": ["sk", "pl"],
-}
-
-
-def get_fallback_chain(
-    lang: str,
-    fallbacks: dict[str, list[str]] | None = None,
-    final_fallback: str = "en",
-) -> list[str]:
-    """Get the full fallback chain for a language.
-
-    Args:
-        lang: Primary language code.
-        fallbacks: Language fallback configuration. If None, uses defaults.
-        final_fallback: Final fallback language (usually "en").
-
-    Returns:
-        List of language codes to try, in order (including the primary).
-    """
-    if fallbacks is None:
-        fallbacks = DEFAULT_LANGUAGE_FALLBACKS
-
-    chain = [lang]
-    if lang in fallbacks:
-        chain.extend(fallbacks[lang])
-    if final_fallback not in chain:
-        chain.append(final_fallback)
-    return chain
-
-
-def apply_language_fallbacks(
-    labels: dict[str, str],
-    requested_languages: list[str],
-    fallbacks: dict[str, list[str]] | None = None,
-    final_fallback: str = "en",
-) -> dict[str, str]:
-    """Apply language fallbacks to fill in missing translations.
-
-    For each requested language that doesn't have a label, tries fallback
-    languages in order until one is found.
-
-    Args:
-        labels: Dict of available labels (lang -> label).
-        requested_languages: Languages the user requested.
-        fallbacks: Language fallback configuration.
-        final_fallback: Final fallback language.
-
-    Returns:
-        Dict with labels for all requested languages (using fallbacks where needed).
-    """
-    result: dict[str, str] = {}
-
-    for lang in requested_languages:
-        if lang in labels:
-            # Direct match
-            result[lang] = labels[lang]
-        else:
-            # Try fallback chain
-            chain = get_fallback_chain(lang, fallbacks, final_fallback)
-            for fallback_lang in chain[1:]:  # Skip first (it's the same as lang)
-                if fallback_lang in labels:
-                    result[lang] = labels[fallback_lang]
-                    logger.debug("Using %s fallback for %s", fallback_lang, lang)
-                    break
-
-    return result
 
 
 @dataclass

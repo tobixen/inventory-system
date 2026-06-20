@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+- **Language-fallback subsystem** — `DEFAULT_LANGUAGE_FALLBACKS`, `get_fallback_chain()` and `apply_language_fallbacks()` in `vocabulary.py`, plus `Config.language_fallbacks` / `Config.get_language_fallback_chain()` and the `language_fallbacks` config default. It was dead code (no production caller; the live resolver `resolve_category()` already delegates cross-language matching to tingbok), and keeping a second copy duplicated logic that belongs to the tingbok service. Cross-language *fallback* resolution is now solely tingbok's concern; inventory-md retains only the same-language alias handling (`LANGUAGE_CODE_ALIASES` / `expand_languages_with_aliases`). Supersedes the v0.14.0 "Language fallback data deduplicated" change.
+
 ## [v0.14.0] - 2026-06-20
 
 I've been hammering on this project for several month now forgetting to make releases "on the go".  The following CHANGELOG seems overwhelming, it's AI-generated, probably full of junk, but I believe I'm the only user of this project so I just let it slide through.

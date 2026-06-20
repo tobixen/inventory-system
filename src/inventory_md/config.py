@@ -24,9 +24,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .vocabulary import DEFAULT_LANGUAGE_FALLBACKS
-from .vocabulary import get_fallback_chain as _get_fallback_chain
-
 # Config filenames for current working directory (project-local config).
 # Uses namespaced names only to avoid colliding with unrelated config.yaml files.
 CONFIG_FILENAMES = ["inventory-md.yaml", "inventory-md.json"]
@@ -49,8 +46,6 @@ DEFAULTS: dict[str, Any] = {
         "style": "standard",
         "duplicate_qr": False,
     },
-    # Language fallback chains for translations — canonical data lives in vocabulary.py
-    "language_fallbacks": {**DEFAULT_LANGUAGE_FALLBACKS, "_final_fallback": "en"},
 }
 
 
@@ -380,31 +375,3 @@ class Config:
         if value is False:
             return "no"
         return str(value) if value else "en"
-
-    @property
-    def language_fallbacks(self) -> dict[str, list[str]]:
-        """Return language fallback chains for translation lookup.
-
-        When a label isn't found in the preferred language, try fallback
-        languages in order. This is useful for mutually intelligible languages
-        (e.g., Scandinavian languages, Romance languages).
-
-        Example config:
-            language_fallbacks:
-              nb: [no, da, nn, sv]
-              de: [de-AT, de-CH, nl]
-        """
-        return self.get("language_fallbacks", DEFAULTS["language_fallbacks"])
-
-    def get_language_fallback_chain(self, lang: str) -> list[str]:
-        """Get the full fallback chain for a language, ending with final fallback.
-
-        Args:
-            lang: Primary language code.
-
-        Returns:
-            List of language codes to try, in order (including the primary).
-        """
-        fallbacks = self.language_fallbacks
-        final = fallbacks.get("_final_fallback", "en")
-        return _get_fallback_chain(lang, fallbacks, final_fallback=final)
