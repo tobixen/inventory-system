@@ -14,7 +14,7 @@ from pathlib import Path
 
 import argcomplete
 
-from . import additem, parser, queries, shopping_list, vocabulary
+from . import additem, moveitem, parser, queries, shopping_list, vocabulary
 from ._version import __version__
 from .config import Config, load_config
 
@@ -1057,6 +1057,31 @@ Examples:
         "--file", type=Path, dest="file", help="inventory.md to edit (default: configured or ./inventory.md)"
     )
 
+    # Move command
+    move_parser = subparsers.add_parser(
+        "move",
+        help="Move an existing item to another container in inventory.md",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Relocate an existing ID:-tagged item bullet from wherever it currently sits into
+another container's section, carrying any of its indented sub-bullets along.
+Only items that exist as a single ID: bullet can be moved; free-text list entries
+without an ID are not addressable.
+
+Examples:
+  inventory-md move wd40-200ml TB-23
+  inventory-md move sealant-soudal TB-24 --dry-run
+        """,
+    )
+    move_parser.add_argument("item_id", help="ID of the item to move (e.g. wd40-200ml)")
+    move_parser.add_argument("container_id", help="Destination container ID (e.g. TB-23)")
+    move_parser.add_argument(
+        "--dry-run", action="store_true", help="Validate and report the move without writing the file"
+    )
+    move_parser.add_argument(
+        "--file", type=Path, dest="file", help="inventory.md to edit (default: configured or ./inventory.md)"
+    )
+
     # Update-template command
     update_parser = subparsers.add_parser("update-template", help="Update search.html to latest version")
     update_parser.add_argument("directory", type=Path, nargs="?", help="Target directory (default: current directory)")
@@ -1324,6 +1349,8 @@ Examples:
         )
     elif args.command == "add":
         return add_item_command(args, config)
+    elif args.command == "move":
+        return move_item_command(args, config)
     else:
         parser_cli.print_help()
         return 1
@@ -1375,6 +1402,45 @@ def add_item_command(args, config: Config) -> int:
         return 1
 
     print(f"✅ Added to {args.container_id}:\n   {result.item_line}")
+    print(f"   in {md_path}")
+    print("Run 'inventory-md parse' to refresh inventory.json.")
+    return 0
+
+
+def move_item_command(args, config: Config) -> int:
+    """Handle the `move` subcommand: relocate an item line to another container."""
+    if args.file is not None:
+        md_path = args.file
+    elif config.inventory_file:
+        md_path = Path(config.inventory_file)
+    else:
+        md_path = Path("inventory.md")
+
+    if not md_path.exists():
+        print(f"❌ Error: {md_path} not found.")
+        return 1
+
+    result = moveitem.move_item(
+        md_path,
+        item_id=args.item_id,
+        container_id=args.container_id,
+        dry_run=args.dry_run,
+    )
+
+    for warning in result.warnings:
+        print(f"⚠️  {warning}")
+
+    if result.errors:
+        for error in result.errors:
+            print(f"❌ {error}")
+        return 1
+
+    src = result.from_container or "?"
+    if args.dry_run:
+        print(f"🔎 Would move {args.item_id} from {src} to {args.container_id}:\n   {result.item_line}")
+        return 0
+
+    print(f"✅ Moved {args.item_id} from {src} to {args.container_id}:\n   {result.item_line}")
     print(f"   in {md_path}")
     print("Run 'inventory-md parse' to refresh inventory.json.")
     return 0

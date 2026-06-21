@@ -27,6 +27,24 @@ inventory-md add A2 --category hammer --id bosch-hammer "Bosch hammer"
 The rest of this document describes the underlying line format, for reference and
 for hand-editing.
 
+## Moving an item between containers
+
+When you repack physical storage — emptying a shelf into a crate, consolidating
+boxes — use `inventory-md move` instead of hand-editing, which risks duplicating a
+line or orphaning its sub-bullets:
+
+```bash
+inventory-md move wd40-200ml TB-23            # relocate the item into TB-23
+inventory-md move sealant-soudal TB-24 --dry-run   # preview source → destination
+```
+
+- The destination container must already exist (create the section first).
+- Only items that exist as a single `ID:` bullet can be moved; free-text list
+  entries without an ID are not addressable. Any indented sub-bullets under the
+  item move with it.
+- `--dry-run` reports the source and destination container and the line that would
+  move, without writing.
+
 ## Looking up a barcode (EAN)
 
 Before adding a barcoded item, check whether the product is already known. Ask

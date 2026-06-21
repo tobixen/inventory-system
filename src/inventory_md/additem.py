@@ -145,13 +145,12 @@ def format_item_line(
     return "* " + " ".join(parts)
 
 
-def insert_item_line(lines: list[str], container_id: str, item_line: str) -> list[str]:
-    """Return ``lines`` with ``item_line`` inserted into the named container.
+def insertion_index(lines: list[str], container_id: str) -> int:
+    """Return the line index at which a new bullet should be spliced.
 
-    The line is placed after the last existing list item in the container's
-    section, or immediately after the heading (and its blank line) if the
-    container has no items yet.  Raises :class:`ValueError` if the container is
-    not found.
+    The slot is after the last existing list item in the container's section,
+    or immediately after the heading (and its blank line) if the container has
+    no items yet.  Raises :class:`ValueError` if the container is not found.
     """
     located = _parser.find_container_section(lines, container_id)
     if located is None:
@@ -165,14 +164,24 @@ def insert_item_line(lines: list[str], container_id: str, item_line: str) -> lis
             last_bullet = i
 
     if last_bullet is not None:
-        insert_at = last_bullet + 1
-    else:
-        # No items yet: insert right after the heading, skipping one blank line
-        # so the bullet doesn't glue onto the heading.
-        insert_at = start + 1
-        if insert_at < end and not lines[insert_at].strip():
-            insert_at += 1
+        return last_bullet + 1
+    # No items yet: insert right after the heading, skipping one blank line
+    # so the bullet doesn't glue onto the heading.
+    insert_at = start + 1
+    if insert_at < end and not lines[insert_at].strip():
+        insert_at += 1
+    return insert_at
 
+
+def insert_item_line(lines: list[str], container_id: str, item_line: str) -> list[str]:
+    """Return ``lines`` with ``item_line`` inserted into the named container.
+
+    The line is placed after the last existing list item in the container's
+    section, or immediately after the heading (and its blank line) if the
+    container has no items yet.  Raises :class:`ValueError` if the container is
+    not found.
+    """
+    insert_at = insertion_index(lines, container_id)
     return lines[:insert_at] + [item_line] + lines[insert_at:]
 
 

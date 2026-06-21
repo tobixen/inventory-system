@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`inventory-md move <item-id> <container-id>`** — relocate an existing `ID:`-tagged item bullet from wherever it sits into another container's section, carrying any of its indented sub-bullets along. The counterpart to `add`, for the recurring chore of repacking physical storage; doing it by hand-editing markdown risks duplicating a line instead of moving it, or orphaning sub-bullets. The destination container must already exist; only single `ID:` bullets are addressable (free-text list entries without an ID are not). Supports `--dry-run` (reports source → destination and the line, writes nothing) and `--file`. New module `moveitem.py`; the bullet-insertion slot logic is shared with `add` via the extracted `additem.insertion_index()`.
+
 ### Removed
 - **Language-fallback subsystem** — `DEFAULT_LANGUAGE_FALLBACKS`, `get_fallback_chain()` and `apply_language_fallbacks()` in `vocabulary.py`, plus `Config.language_fallbacks` / `Config.get_language_fallback_chain()` and the `language_fallbacks` config default. It was dead code (no production caller; the live resolver `resolve_category()` already delegates cross-language matching to tingbok), and keeping a second copy duplicated logic that belongs to the tingbok service. Cross-language *fallback* resolution is now solely tingbok's concern; inventory-md retains only the same-language alias handling (`LANGUAGE_CODE_ALIASES` / `expand_languages_with_aliases`). Supersedes the v0.14.0 "Language fallback data deduplicated" change.
 

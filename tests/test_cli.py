@@ -898,3 +898,40 @@ class TestVocabularyOffline:
         assert rc == 1
         mock_enrich.assert_called_once()
         assert mock_enrich.call_args.kwargs["lang"] == "de"
+
+
+class TestMoveCommand:
+    """Integration tests for the `move` subcommand wiring."""
+
+    _MD = (
+        "# ID:box1 First box\n\n"
+        "* category:hammer ID:hammer-1 A hammer\n"
+        "* category:lubricant ID:wd40 WD-40 spray\n\n"
+        "# ID:box2 Second box\n\n"
+        "No items yet.\n"
+    )
+
+    def test_move_relocates_and_reports(self, tmp_path, capsys) -> None:
+        md = tmp_path / "inventory.md"
+        md.write_text(self._MD, encoding="utf-8")
+        rc = cli.main(["move", "wd40", "box2", "--file", str(md)])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Moved wd40 from box1 to box2" in out
+        box1, box2 = md.read_text(encoding="utf-8").split("# ID:box2")
+        assert "wd40" not in box1
+        assert "wd40" in box2
+
+    def test_move_unknown_item_exits_1(self, tmp_path) -> None:
+        md = tmp_path / "inventory.md"
+        md.write_text(self._MD, encoding="utf-8")
+        rc = cli.main(["move", "nope", "box2", "--file", str(md)])
+        assert rc == 1
+        assert md.read_text(encoding="utf-8") == self._MD
+
+    def test_move_dry_run_leaves_file(self, tmp_path) -> None:
+        md = tmp_path / "inventory.md"
+        md.write_text(self._MD, encoding="utf-8")
+        rc = cli.main(["move", "wd40", "box2", "--file", str(md), "--dry-run"])
+        assert rc == 0
+        assert md.read_text(encoding="utf-8") == self._MD
