@@ -34,21 +34,6 @@ class MarkdownSection:
     parent: "MarkdownSection | None" = None
 
 
-def parse_markdown_file(filepath: str) -> list[MarkdownSection]:
-    """
-    Parse a markdown file into structured sections.
-
-    Args:
-        filepath: Path to the markdown file
-
-    Returns:
-        List of top-level MarkdownSection objects
-    """
-    with open(filepath, encoding="utf-8") as f:
-        content = f.read()
-    return parse_markdown_string(content)
-
-
 def parse_markdown_string(content: str) -> list[MarkdownSection]:
     """
     Parse a markdown string into structured sections.

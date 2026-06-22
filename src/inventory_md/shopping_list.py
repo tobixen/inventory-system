@@ -463,24 +463,3 @@ def generate_shopping_list(
     lines += ["---", "", f"**Summary:** {total_missing} missing, {total_low} low stock, {total_ok} fully stocked"]
 
     return "\n".join(lines)
-
-
-def generate_shopping_list_if_needed(
-    inventory_dir: Path,
-    include_dated: bool = True,
-    lang: str = "en",
-) -> bool:
-    """Generate shopping list if ``wanted-items.md`` and ``inventory.json`` both exist.
-
-    Returns ``True`` if the shopping list was written.
-    """
-    wanted_path = inventory_dir / "wanted-items.md"
-    inventory_json_path = inventory_dir / "inventory.json"
-    output_path = inventory_dir / "shopping-list.md"
-
-    if not wanted_path.exists() or not inventory_json_path.exists():
-        return False
-
-    output = generate_shopping_list(wanted_path, inventory_json_path, include_dated=include_dated, lang=lang)
-    output_path.write_text(output, encoding="utf-8")
-    return True

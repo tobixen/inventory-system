@@ -313,38 +313,6 @@ def resolve_vocabulary_from_tingbok(
     return concepts
 
 
-# =============================================================================
-# LANGUAGE CODE ALIASES
-# =============================================================================
-#
-# Note: cross-language *fallback* resolution (e.g. trying Danish when a Norwegian
-# label is missing) is intentionally NOT done here — that is the tingbok service's
-# responsibility. inventory-md only handles alias codes for the same language.
-
-# Language code aliases — codes that refer to the same language.
-# Unlike fallbacks (which cross language boundaries), aliases are alternate
-# codes for the same language and should always be fetched together.
-# Example: "nb" (Norwegian Bokmål) and "no" (Norwegian) are used
-# interchangeably by different data sources (OFF uses "no", DBpedia uses "nb").
-LANGUAGE_CODE_ALIASES: dict[str, list[str]] = {
-    "nb": ["no"],
-    "no": ["nb"],
-}
-
-
-def expand_languages_with_aliases(languages: list[str]) -> list[str]:
-    """Expand a languages list to include alias codes.
-
-    Returns a new list with alias languages appended (no duplicates).
-    """
-    expanded = list(languages)
-    for lang in languages:
-        for alias in LANGUAGE_CODE_ALIASES.get(lang, []):
-            if alias not in expanded:
-                expanded.append(alias)
-    return expanded
-
-
 @dataclass
 class Concept:
     """A SKOS concept with labels and hierarchy."""
@@ -612,23 +580,6 @@ def lookup_concept(label: str, vocabulary: dict[str, Concept]) -> Concept | None
     return None
 
 
-def get_broader_concepts(concept: Concept, vocabulary: dict[str, Concept]) -> list[Concept]:
-    """Get all broader (parent) concepts.
-
-    Args:
-        concept: The concept to get parents for.
-        vocabulary: Dictionary of all concepts.
-
-    Returns:
-        List of parent concepts.
-    """
-    parents = []
-    for broader_id in concept.broader:
-        if broader_id in vocabulary:
-            parents.append(vocabulary[broader_id])
-    return parents
-
-
 def is_descendant_of(
     concept_id: str,
     ancestor_id: str,
@@ -652,23 +603,6 @@ def is_descendant_of(
     if not concept:
         return False
     return any(is_descendant_of(b, ancestor_id, vocabulary, visited) for b in concept.broader)
-
-
-def get_narrower_concepts(concept: Concept, vocabulary: dict[str, Concept]) -> list[Concept]:
-    """Get all narrower (child) concepts.
-
-    Args:
-        concept: The concept to get children for.
-        vocabulary: Dictionary of all concepts.
-
-    Returns:
-        List of child concepts.
-    """
-    children = []
-    for narrower_id in concept.narrower:
-        if narrower_id in vocabulary:
-            children.append(vocabulary[narrower_id])
-    return children
 
 
 def _infer_hierarchy(concepts: dict[str, Concept]) -> None:
