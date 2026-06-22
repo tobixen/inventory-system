@@ -754,7 +754,11 @@ def main():
     # roughly upright. No brute-force rotation by default.
     ocr_rot = None
 
-    for image_path in image_paths:
+    n_images = len(image_paths)
+    for idx, image_path in enumerate(image_paths, 1):
+        # Per-photo progress to stderr — OCR is several seconds per photo, so
+        # without this the script looks hung and invites busy-wait polling.
+        print(f"[{idx}/{n_images}] scanning {image_path.name} ...", file=sys.stderr, flush=True)
         if not image_path.exists():
             print(f"Warning: {image_path} not found", file=sys.stderr)
             continue

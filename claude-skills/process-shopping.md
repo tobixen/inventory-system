@@ -24,6 +24,7 @@ The procedure is optimized for minimal AI-usage, and a minimum of permission-pro
 * The procedure in this file should be followed **point by point**.  Commands not listed in the procedure should only be run if the user requests it.
 * **Do not** run commands like git, grep, sed to check the status - use the commands provided in the procedure.
 * **Do not** chain together commands.
+* **Do not** poll for a slow/background command with shell loops (`while kill -0`, `pgrep`, repeated `sleep`).  These are unlisted commands and each one is a permission-prompt — the user is often AFK during this skill and wants it to run unattended.  When a step (e.g. `extract_barcodes.py`, which is slow) is running in the background, simply **stop and wait**: the harness re-invokes you when the command finishes, or you may read its output file **once**.  Never busy-wait.
 
 Exceptions may apply - but if it's needed to run extra commands, it should be considered (together with the user) to improve the documentation, skill files or scripts.
 
