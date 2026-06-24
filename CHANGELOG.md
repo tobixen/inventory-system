@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Category-tree cycles no longer crash `search.html`** — some upstream (tingbok) concepts arrive with contradictory SKOS relations that list a concept in *both* `broader` and `narrower`, including self-references (e.g. `lentil` with `broader == narrower == ["lentil"]`, and the `rope` ⇄ `rope/cord` pair). The web UI walks `narrower` recursively, so once such a looping category had items (count > 0) the tree recursed until the JS stack overflowed — the page showed only "Error loading data. Check that inventory.json exists." (a misleading message, since the data loaded fine). `build_category_tree()` now strips self-references and breaks `narrower` cycles (DFS back-edge removal) so generated `vocabulary.json` is always a DAG, and `renderCategoryNode()` in the template carries an ancestor set as a defensive guard so a malformed tree can never hang the page regardless of data source.
+
 ### Added
 - **`inventory-md move <item-id> <container-id>`** — relocate an existing `ID:`-tagged item bullet from wherever it sits into another container's section, carrying any of its indented sub-bullets along. The counterpart to `add`, for the recurring chore of repacking physical storage; doing it by hand-editing markdown risks duplicating a line instead of moving it, or orphaning sub-bullets. The destination container must already exist; only single `ID:` bullets are addressable (free-text list entries without an ID are not). Supports `--dry-run` (reports source → destination and the line, writes nothing) and `--file`. New module `moveitem.py`; the bullet-insertion slot logic is shared with `add` via the extracted `additem.insertion_index()`.
 

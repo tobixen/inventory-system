@@ -367,6 +367,67 @@ class TestBuildCategoryTree:
         assert "food/vegetables" in tree.concepts["food"].narrower
         assert "food/vegetables/potatoes" in tree.concepts["food/vegetables"].narrower
 
+    def test_self_loop_is_removed(self):
+        """A concept listing itself in broader/narrower must not survive in the tree.
+
+        Tingbok serves some concepts (e.g. "lentil") with broader==narrower==[self],
+        which made the search.html category tree recurse infinitely.
+        """
+        vocab = {
+            "lentil": vocabulary.Concept(
+                id="lentil",
+                prefLabel="Lentil",
+                broader=["lentil"],
+                narrower=["lentil"],
+            ),
+        }
+        tree = vocabulary.build_category_tree(vocab, infer_hierarchy=False)
+
+        lentil = tree.concepts["lentil"]
+        assert "lentil" not in lentil.narrower
+        assert "lentil" not in lentil.broader
+
+    def test_mutual_cycle_is_broken(self):
+        """Two concepts referencing each other in narrower must form a DAG.
+
+        Tingbok serves "rope" and "rope/cord" each listing the other in *both*
+        broader and narrower, producing a 2-cycle that crashed the UI.
+        """
+        vocab = {
+            "rope": vocabulary.Concept(
+                id="rope",
+                prefLabel="ropes",
+                broader=["rope/cord"],
+                narrower=["rope/cord"],
+            ),
+            "rope/cord": vocabulary.Concept(
+                id="rope/cord",
+                prefLabel="Rope",
+                broader=["rope"],
+                narrower=["rope"],
+            ),
+        }
+        tree = vocabulary.build_category_tree(vocab, infer_hierarchy=True)
+
+        # Walking narrower from any node must terminate (no cycle).
+        concepts = tree.concepts
+
+        def reachable(start: str) -> set[str]:
+            seen: set[str] = set()
+            stack = [start]
+            while stack:
+                cur = stack.pop()
+                for child in concepts[cur].narrower:
+                    assert child != cur, f"self-loop at {cur}"
+                    if child not in seen:
+                        seen.add(child)
+                        stack.append(child)
+            return seen
+
+        # Neither node may be reachable from itself via narrower.
+        assert "rope" not in reachable("rope")
+        assert "rope/cord" not in reachable("rope/cord")
+
     def test_explicit_broader_not_overridden(self):
         """Test that explicit broader relationships are not overridden."""
         vocab = {

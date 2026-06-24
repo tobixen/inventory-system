@@ -766,6 +766,63 @@ def _add_category_by_source_nodes(concepts: dict[str, Concept]) -> None:
     )
 
 
+def _break_narrower_cycles(concepts: dict[str, Concept]) -> None:
+    """Remove cycles from the ``narrower`` graph so the UI tree is a DAG.
+
+    Some upstream sources (notably tingbok) serve contradictory SKOS relations
+    where a concept lists another -- or itself -- in *both* ``broader`` and
+    ``narrower`` (e.g. ``lentil`` with ``narrower == broader == ["lentil"]``, or
+    the ``rope`` <-> ``rope/cord`` pair).  The search.html category tree walks
+    ``narrower`` recursively, so such cycles caused infinite recursion / a stack
+    overflow ("Error loading data").
+
+    This drops self-references and any ``narrower`` edge that closes a cycle
+    (a back-edge in a DFS), keeping the first-seen edges.  The matching reverse
+    ``broader`` entry is removed too, to keep the two relations consistent.
+    """
+    # 1. Strip self-references from both relations.
+    for cid, concept in concepts.items():
+        if cid in concept.narrower:
+            concept.narrower = [n for n in concept.narrower if n != cid]
+        if cid in concept.broader:
+            concept.broader = [b for b in concept.broader if b != cid]
+
+    # 2. Find back-edges in the narrower graph via DFS (iterative, to avoid
+    #    Python recursion limits on deep vocabularies), then remove them.
+    WHITE, GREY, BLACK = 0, 1, 2
+    color: dict[str, int] = dict.fromkeys(concepts, WHITE)
+    back_edges: list[tuple[str, str]] = []
+
+    def visit(root: str) -> None:
+        # Stack holds [node, index-of-next-child-to-process].
+        stack: list[list] = [[root, 0]]
+        color[root] = GREY
+        while stack:
+            node, idx = stack[-1]
+            children = concepts[node].narrower
+            if idx >= len(children):
+                color[node] = BLACK
+                stack.pop()
+                continue
+            stack[-1][1] = idx + 1
+            child = children[idx]
+            if child not in concepts:
+                continue
+            if color[child] == GREY:
+                back_edges.append((node, child))  # closes a cycle
+            elif color[child] == WHITE:
+                color[child] = GREY
+                stack.append([child, 0])
+
+    for cid in concepts:
+        if color[cid] == WHITE:
+            visit(cid)
+
+    for node, child in back_edges:
+        concepts[node].narrower = [c for c in concepts[node].narrower if c != child]
+        concepts[child].broader = [b for b in concepts[child].broader if b != node]
+
+
 def build_category_tree(vocabulary: dict[str, Concept], infer_hierarchy: bool = True) -> CategoryTree:
     """Build a category tree structure for the UI.
 
@@ -802,6 +859,7 @@ def build_category_tree(vocabulary: dict[str, Concept], infer_hierarchy: bool = 
 
     create_broader_stubs(concepts)
     _add_category_by_source_nodes(concepts)
+    _break_narrower_cycles(concepts)
 
     # Find roots - concepts that should appear at the top level of the tree
     if VIRTUAL_ROOT_ID in concepts:

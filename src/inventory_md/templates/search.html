@@ -2248,9 +2248,14 @@
         }
 
         // Render category tree node recursively
-        function renderCategoryNode(conceptId, depth = 0) {
+        function renderCategoryNode(conceptId, depth = 0, ancestors = null) {
             const concept = vocabularyData.concepts[conceptId];
             if (!concept) return '';
+
+            // Guard against cycles in the narrower graph (malformed/contradictory
+            // SKOS data can make a category its own ancestor, which would recurse
+            // until the stack overflows). Skip a node already on the current path.
+            if (ancestors && ancestors.has(conceptId)) return '';
 
             const hasChildren = concept.narrower && concept.narrower.length > 0;
             const isExpanded = expandedCategories.has(conceptId);
@@ -2286,8 +2291,10 @@
                         const labelB = getConceptLabel(vocabularyData.concepts[b]) || b;
                         return labelA.localeCompare(labelB);
                     });
+                const childAncestors = new Set(ancestors || []);
+                childAncestors.add(conceptId);
                 for (const childId of sortedChildren) {
-                    html += renderCategoryNode(childId, depth + 1);
+                    html += renderCategoryNode(childId, depth + 1, childAncestors);
                 }
                 html += `</div>`;
             }
