@@ -12,6 +12,41 @@ sys.path.insert(0, str(__file__).rsplit("/tests/", 1)[0] + "/scripts")
 import tingbok_push  # noqa: E402
 
 
+def test_canonical_ean_prefixes_lidl_instore_code() -> None:
+    """An 8-digit 2x in-store code is prefixed with the chain slug from the shop name."""
+    assert tingbok_push.canonical_ean("20004132", "Lidl Varna бул. Вл. Варненчик 257") == "lidl-20004132"
+
+
+def test_canonical_ean_prefixes_mercadona_ean8() -> None:
+    """A 0x EAN-8 (Mercadona house-brand range) is prefixed too."""
+    assert tingbok_push.canonical_ean("00501163", "Mercadona") == "mercadona-00501163"
+
+
+def test_canonical_ean_leaves_global_ean_bare() -> None:
+    """A real 13-digit EAN is globally unique and must not be prefixed."""
+    assert tingbok_push.canonical_ean("3800214924577", "Lidl Varna") == "3800214924577"
+
+
+def test_canonical_ean_leaves_weight_code_bare() -> None:
+    """A 13-digit 2x weight/in-store code is not prefixed (matches tingbok's choice)."""
+    assert tingbok_push.canonical_ean("2420520002823", "Lidl Varna") == "2420520002823"
+
+
+def test_canonical_ean_passes_through_already_prefixed() -> None:
+    """A hand-written prefixed key (contains a hyphen) is returned unchanged."""
+    assert tingbok_push.canonical_ean("lidl-20004132", "Lidl Varna") == "lidl-20004132"
+
+
+def test_canonical_ean_no_shop_leaves_bare() -> None:
+    """Ad-hoc push with no shop can't derive a slug → leave the bare code."""
+    assert tingbok_push.canonical_ean("20004132", "") == "20004132"
+
+
+def test_canonical_ean_non_latin_shop_leaves_bare() -> None:
+    """A Cyrillic-only shop name yields no ASCII slug → don't build a non-Latin prefix."""
+    assert tingbok_push.canonical_ean("20004132", "Кауфланд") == "20004132"
+
+
 def test_found_item_no_receipt_no_price() -> None:
     """A found item (no receipt_name, no price) pushes name/categories/quantity only."""
     item = {

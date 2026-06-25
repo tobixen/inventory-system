@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,51 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from staging import require_flat  # noqa: E402
 
 DEFAULT_TINGBOK = "https://tingbok.plann.no"
+
+
+def chain_slug(shop: str) -> str | None:
+    """Derive a chain slug from a free-text shop name (its first token).
+
+    ``"Lidl Varna бул. ..."`` → ``"lidl"``; ``"Mercadona"`` → ``"mercadona"``.
+    Returns ``None`` when the first token has no ASCII-alphanumeric characters
+    (a Cyrillic-only or empty name), so a non-Latin prefix is never built.
+    """
+    tokens = shop.strip().split()
+    if not tokens:
+        return None
+    slug = re.sub(r"[^a-z0-9]", "", tokens[0].casefold())
+    return slug or None
+
+
+def is_local_instore_code(code: str) -> bool:
+    """True for short in-store / GS1 restricted-distribution article numbers.
+
+    These codes — Lidl's 8-digit ``2x`` PLUs, Mercadona's ``0x`` EAN-8 range,
+    7-digit shop article numbers — are not globally unique, so tingbok stores
+    them under a ``<chain>-<code>`` key. Genuine global EAN-8/12/13 codes (and
+    13-digit ``2x`` random-weight barcodes) are left bare.
+    """
+    if not code.isdigit():
+        return False
+    if len(code) == 7:
+        return True
+    return len(code) == 8 and code[0] in ("0", "2")
+
+
+def canonical_ean(ean: str, shop: str) -> str:
+    """Return the tingbok key for *ean*, shop-prefixing bare local codes.
+
+    A local in-store code is prefixed with the shop's chain slug
+    (``20004132`` @ ``"Lidl Varna"`` → ``"lidl-20004132"``) so it does not
+    collide with other chains reusing the same number. Already-prefixed codes
+    (containing a hyphen) and global EANs are returned unchanged.
+    """
+    if "-" in ean:
+        return ean
+    slug = chain_slug(shop)
+    if slug and is_local_instore_code(ean):
+        return f"{slug}-{ean}"
+    return ean
 
 
 def _get(base: str, ean: str) -> dict[str, Any]:
@@ -203,7 +249,7 @@ def main() -> int:
             if not item.get("to_tingbok") or not ean:
                 skipped += 1
                 continue
-            ean = str(ean)
+            ean = canonical_ean(str(ean), shop)
             current = _get(base, ean)
             payload = build_payload(item, shop, date, currency, current, args.fill_missing)
             extra = [k for k in ("name", "categories", "quantity") if k in payload]
