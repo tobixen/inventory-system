@@ -137,6 +137,56 @@ This is the introduction.
         assert "USB charger" in item_names
         assert "Hammer" in item_names
 
+    def test_items_under_id_less_subheading_attach_to_container(self, tmp_path):
+        """ID-less sub-headings are human-readable grouping, not sub-containers.
+
+        Their items must attach to the enclosing container rather than being
+        silently dropped.
+        """
+        md_file = tmp_path / "inventory.md"
+        md_file.write_text("""# Inventory
+
+### ID:C-04 Box C-04 - Children's books
+
+Clear plastic box.
+
+#### English children's books
+
+* category:book ID:book-a "A"
+* category:book ID:book-b "B"
+
+#### Norwegian children's books
+
+* category:book ID:book-c "C"
+""")
+        result = parser.parse_inventory(md_file)
+
+        containers = {c["id"]: c for c in result["containers"]}
+        # The ID-less sub-headings must not become containers
+        assert list(containers) == ["C-04"]
+        item_ids = [i["id"] for i in containers["C-04"]["items"]]
+        assert item_ids == ["book-a", "book-b", "book-c"]
+
+    def test_items_under_nested_id_less_subheadings_attach_to_nearest_container(self, tmp_path):
+        """Items attach to the nearest ID-bearing ancestor, across several ID-less levels."""
+        md_file = tmp_path / "inventory.md"
+        md_file.write_text("""## ID:C-09 Junk box
+
+### Electronics/Networking
+
+* category:power-connector ID:adapter-delta Delta AC adapter
+
+#### Alarms and sensors
+
+* category:gas-alarm ID:alarm-gas Gas detector
+""")
+        result = parser.parse_inventory(md_file)
+
+        containers = {c["id"]: c for c in result["containers"]}
+        assert list(containers) == ["C-09"]
+        item_ids = [i["id"] for i in containers["C-09"]["items"]]
+        assert item_ids == ["adapter-delta", "alarm-gas"]
+
     def test_configurable_intro_section_name(self, tmp_path):
         """Intro section name is configurable via config dict."""
         md_file = tmp_path / "inventory.md"

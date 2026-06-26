@@ -310,48 +310,24 @@ def parse_inventory(md_file: Path, config: dict[str, Any] | None = None) -> dict
 
     # Track parent relationships from heading hierarchy
     inferred_parents: dict[str, str] = {}
+    # Container objects by ID, so items under ID-less sub-headings can be
+    # appended to the container they belong to.
+    containers_by_id: dict[str, dict[str, Any]] = {}
 
-    def process_section(section: md_adapter.MarkdownSection, parent_container_id: str | None = None) -> None:
-        """Process a section and its subsections recursively."""
-        heading = section.heading
+    def build_section_items(section: md_adapter.MarkdownSection, owning_container_id: str) -> list[dict[str, Any]]:
+        """Build item dicts from a section's list items and ``**X:**`` pseudo-headers.
 
-        # Check for configured special sections (intro, numbering scheme)
-        if heading.strip() == intro_section_name:
-            result["intro"] = "\n\n".join(section.paragraphs)
-            return
-        if heading.strip() == numbering_section_name:
-            result["numbering_scheme"] = "\n\n".join(section.paragraphs)
-            return
-
-        # Extract metadata from heading
-        parsed = extract_metadata(heading)
-
-        # Sections without an explicit ID are structural/organizational wrappers
-        # (e.g. "# Attic storage", "# Overview"). Don't create a container for
-        # them, but still recurse so their sub-sections become containers.
-        if not parsed["metadata"].get("id"):
-            for subsection in section.subsections:
-                process_section(subsection, parent_container_id)
-            return
-
-        container_id = parsed["metadata"]["id"]
-
-        # Determine parent
-        parent_id = parsed["metadata"].get("parent")
-        if not parent_id and parent_container_id:
-            parent_id = parent_container_id
-            inferred_parents[container_id] = parent_id
-
-        # Parse items from the section's list_items
-        items = []
+        ``owning_container_id`` is the container the items belong to, used for
+        parent inference of items that carry their own ID.
+        """
+        items: list[dict[str, Any]] = []
         for list_item in section.list_items:
             item_text = list_item["text"]
             item_parsed = extract_metadata(item_text)
 
             # Track parent inference for items with IDs
             if item_parsed["metadata"].get("id"):
-                item_id = item_parsed["metadata"]["id"]
-                inferred_parents[item_id] = container_id
+                inferred_parents[item_parsed["metadata"]["id"]] = owning_container_id
 
             items.append(
                 {
@@ -393,6 +369,46 @@ def parse_inventory(md_file: Path, config: dict[str, Any] | None = None) -> dict
                         "is_section_header": True,
                     }
                 )
+        return items
+
+    def process_section(section: md_adapter.MarkdownSection, parent_container_id: str | None = None) -> None:
+        """Process a section and its subsections recursively."""
+        heading = section.heading
+
+        # Check for configured special sections (intro, numbering scheme)
+        if heading.strip() == intro_section_name:
+            result["intro"] = "\n\n".join(section.paragraphs)
+            return
+        if heading.strip() == numbering_section_name:
+            result["numbering_scheme"] = "\n\n".join(section.paragraphs)
+            return
+
+        # Extract metadata from heading
+        parsed = extract_metadata(heading)
+
+        # Sections without an explicit ID are structural/organizational wrappers
+        # (e.g. "# Attic storage") or human-readable grouping headers within a
+        # container (e.g. "#### English children's books"). Don't create a
+        # container for them, but attach any items they carry to the enclosing
+        # container, and still recurse so deeper sub-sections are processed.
+        if not parsed["metadata"].get("id"):
+            parent = containers_by_id.get(parent_container_id) if parent_container_id else None
+            if parent is not None:
+                parent["items"].extend(build_section_items(section, parent_container_id))
+            for subsection in section.subsections:
+                process_section(subsection, parent_container_id)
+            return
+
+        container_id = parsed["metadata"]["id"]
+
+        # Determine parent
+        parent_id = parsed["metadata"].get("parent")
+        if not parent_id and parent_container_id:
+            parent_id = parent_container_id
+            inferred_parents[container_id] = parent_id
+
+        # Parse items from the section's list_items
+        items = build_section_items(section, container_id)
 
         # Get description from paragraphs (excluding section headers and images)
         description_parts = []
@@ -415,6 +431,7 @@ def parse_inventory(md_file: Path, config: dict[str, Any] | None = None) -> dict
             "metadata": parsed["metadata"],
         }
         result["containers"].append(container)
+        containers_by_id[container_id] = container
 
         # Process subsections with this container as parent
         for subsection in section.subsections:
