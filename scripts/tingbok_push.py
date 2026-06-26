@@ -55,6 +55,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import re
 import sys
@@ -149,11 +150,17 @@ def _shops(staging: dict[str, Any]) -> list[dict[str, Any]]:
     scripts/staging.py).
     """
     require_flat(staging)
+    session = staging.get("session", "")
+    # PyYAML parses a bare ``session: 2024-11-18`` as a datetime.date, which is
+    # not JSON-serialisable when embedded in the price/receipt-name payload.
+    # Coerce to an ISO string (a quoted/string session passes through unchanged).
+    if isinstance(session, datetime.date):  # also covers datetime.datetime
+        session = session.isoformat()
     return [
         {
             "shop": staging.get("shop", ""),
             "currency": staging.get("currency", "EUR"),
-            "date": staging.get("session", ""),
+            "date": session,
             "items": staging.get("items", []),
         }
     ]

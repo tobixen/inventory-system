@@ -5,11 +5,34 @@ The same script serves the shopping pipeline and ad-hoc single found-item pushes
 no price, so the payload must not carry empty ``receipt_names``/``prices`` rows.
 """
 
+import datetime
 import sys
 
 sys.path.insert(0, str(__file__).rsplit("/tests/", 1)[0] + "/scripts")
 
 import tingbok_push  # noqa: E402
+
+
+def test_shops_coerces_date_session_to_iso_string() -> None:
+    """A bare YAML ``session:`` date is parsed by PyYAML as ``datetime.date``;
+    it must be coerced to an ISO string so the JSON-serialised payload (which
+    embeds it as price/receipt-name dates) doesn't crash with
+    "Object of type date is not JSON serializable"."""
+    staging = {
+        "shop": "SVB24",
+        "currency": "EUR",
+        "session": datetime.date(2024, 11, 18),
+        "items": [],
+    }
+    block = tingbok_push._shops(staging)[0]
+    assert block["date"] == "2024-11-18"
+    assert isinstance(block["date"], str)
+
+
+def test_shops_leaves_string_session_unchanged() -> None:
+    """A quoted/string session date passes through untouched."""
+    block = tingbok_push._shops({"session": "2025-06-02", "items": []})[0]
+    assert block["date"] == "2025-06-02"
 
 
 def test_canonical_ean_prefixes_lidl_instore_code() -> None:
