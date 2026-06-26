@@ -190,11 +190,23 @@ def extract_metadata(text: str) -> dict[str, Any]:
     # Pattern matches: key:value or (key:value)
     pattern = r"\(?(\w+):([^)\s]+)\)?"
 
+    # ``category`` and ``tag`` legitimately repeat and accumulate; every other
+    # key is single-valued, so only its first occurrence is metadata. A later
+    # ``id:``/``ean:``/… token is free text inside the description (e.g. a device
+    # id quoted in a GPS tracker's name) and must be left in the name, not
+    # consumed or allowed to override the real value.
+    _repeatable = {"category", "tag"}
+    seen_single: set[str] = set()
+
     matches = []
     for match in re.finditer(pattern, text):
         key = match.group(1).lower()
         if key not in _KNOWN_METADATA_KEYS:
             continue
+        if key not in _repeatable:
+            if key in seen_single:
+                continue
+            seen_single.add(key)
         value = match.group(2).strip()
 
         # Special handling for tags: split by comma
@@ -320,8 +332,14 @@ def parse_inventory(md_file: Path, config: dict[str, Any] | None = None) -> dict
         ``owning_container_id`` is the container the items belong to, used for
         parent inference of items that carry their own ID.
         """
-        items: list[dict[str, Any]] = []
-        for list_item in section.list_items:
+
+        def flatten(list_item: dict[str, Any], indented: bool) -> list[dict[str, Any]]:
+            """Flatten a list item and all its descendants (arbitrary depth).
+
+            Markdown nesting deeper than one level was previously dropped; the
+            flattened view keeps every bullet, marking anything below the top
+            level as ``indented``.
+            """
             item_text = list_item["text"]
             item_parsed = extract_metadata(item_text)
 
@@ -329,31 +347,23 @@ def parse_inventory(md_file: Path, config: dict[str, Any] | None = None) -> dict
             if item_parsed["metadata"].get("id"):
                 inferred_parents[item_parsed["metadata"]["id"]] = owning_container_id
 
-            items.append(
+            out = [
                 {
                     "id": item_parsed["metadata"].get("id"),
                     "parent": item_parsed["metadata"].get("parent"),
                     "name": item_parsed["name"],
                     "raw_text": item_text,
                     "metadata": item_parsed["metadata"],
-                    "indented": False,
+                    "indented": indented,
                 }
-            )
-
-            # Handle nested items
+            ]
             for nested_item in list_item.get("nested", []):
-                nested_text = nested_item["text"]
-                nested_parsed = extract_metadata(nested_text)
-                items.append(
-                    {
-                        "id": nested_parsed["metadata"].get("id"),
-                        "parent": nested_parsed["metadata"].get("parent"),
-                        "name": nested_parsed["name"],
-                        "raw_text": nested_text,
-                        "metadata": nested_parsed["metadata"],
-                        "indented": True,
-                    }
-                )
+                out.extend(flatten(nested_item, True))
+            return out
+
+        items: list[dict[str, Any]] = []
+        for list_item in section.list_items:
+            items.extend(flatten(list_item, False))
 
         # Handle section headers in paragraphs (like **Arabic:**)
         for para in section.paragraphs:

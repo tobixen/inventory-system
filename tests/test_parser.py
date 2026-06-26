@@ -236,6 +236,26 @@ Default intro text.
         assert container["items"][1]["indented"] is True
         assert container["items"][2]["indented"] is True
 
+    def test_parse_deeply_nested_items(self, tmp_path):
+        """Nesting deeper than one level must not be dropped (issue: aft-cabin overview)."""
+        md_file = tmp_path / "inventory.md"
+        md_file.write_text("""### ID:aft-cabin Aft cabin
+
+* ID:sb Starboard side
+  * ID:sb1 Storage behind artwork
+  * ID:sb2 Wardrobe storage
+    * ID:sb3 Top shelf
+    * ID:sb4 Upper shelf
+""")
+        result = parser.parse_inventory(md_file)
+
+        container = result["containers"][0]
+        item_ids = [i["id"] for i in container["items"]]
+        assert item_ids == ["sb", "sb1", "sb2", "sb3", "sb4"]
+        # everything below the top-level bullet is indented
+        assert container["items"][0]["indented"] is False
+        assert all(i["indented"] is True for i in container["items"][1:])
+
     def test_parse_item_categories(self, tmp_path):
         """Test parsing items with category metadata."""
         md_file = tmp_path / "inventory.md"
@@ -326,6 +346,27 @@ class TestExtractMetadata:
         assert result["metadata"].get("categories") is None
         assert result["metadata"].get("tags") == ["tools"]
         assert result["name"] == "Hammer"
+
+    def test_first_id_wins_when_line_has_two(self):
+        """A second ID: in the free-text description must not override the item's ID.
+
+        Real case: a GPS tracker line carrying a device id in its description
+        (``ID:280425160522``) was parsed under that id instead of the leading
+        ``ID:gps-tracker-fl1``, truncating the name at the second token.
+        """
+        result = parser.extract_metadata(
+            "category:gps-tracker ID:gps-tracker-fl1 GPS tracker (black, IMEI:355228042516052, ID:280425160522)"
+        )
+        assert result["metadata"].get("id") == "gps-tracker-fl1"
+        # the stray second ID: stays in the name rather than being consumed
+        assert "ID:280425160522" in result["name"]
+        assert "GPS tracker" in result["name"]
+
+    def test_multiple_categories_across_tokens_still_accumulate(self):
+        """First-wins must not apply to repeatable keys (category/tag)."""
+        result = parser.extract_metadata("category:canning category:pate Fish pâté")
+        assert result["metadata"].get("categories") == ["canning", "pate"]
+        assert result["name"] == "Fish pâté"
 
 
 class TestExtractMetadataTypedFields:
