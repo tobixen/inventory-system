@@ -186,6 +186,21 @@ driver runs*; run them individually only to debug.
    `inventory_id` per row — there is nothing left to edit by hand here.
    This is `inventory-md add` applied per row; see `docs/ADDING-ITEMS.md` for the
    field reference and the single-item CLI.
+
+   **One-off / non-receipt additions** — a single found item, an installed
+   fixture, items reconstructed from an order history rather than a scanned
+   receipt — use the single-item CLI directly:
+   ```bash
+   inventory-md add CONTAINER --category LEAF [--tag k:v]… [--ean …] [--qty N] [--price CUR:N/unit] "name"
+   ```
+   It supports `--tag` (repeatable), `--ean`, `--isbn`, `--qty`, `--mass`/`--volume`,
+   `--price`, `--bb`/`--est` and `--id`, picks the container section, and folds in the
+   same QA (duplicate-ID, category, bb) as the importer — so there is **still no
+   reason to hand-edit `inventory.md`**. Note the trap: `inventory_import.py` does
+   *not* write `--tag`, but `inventory-md add` does — needing a tag is **not** a
+   licence to hand-edit. The **only** change that justifies touching the markdown is
+   **modifying an existing line** (e.g. correcting an EAN), which the append-only
+   `add` cannot do.
 4. **Photos** (manual) — copy only **label** photos to `photos/LOCATION-ID/`; skip
    barcode/expiry close-ups; skip fast-consumed items. Never `git add` photos.
 5. **tingbok** — push price + receipt-name observations for reviewed EANs (a

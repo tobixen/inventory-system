@@ -39,6 +39,11 @@ class TestBroadCategories:
         data = self._inv([{"id": "tom", "metadata": {"categories": ["tomatoes"]}}])
         assert check_broad_categories(data, DEFAULT_BROAD_CATEGORIES) == []
 
+    def test_bread_is_specific_enough_ok(self):
+        # 'bread' is a usable leaf category, not a too-broad bucket.
+        data = self._inv([{"id": "bread-1", "metadata": {"categories": ["bread"]}}])
+        assert check_broad_categories(data, DEFAULT_BROAD_CATEGORIES) == []
+
     def test_nonfood_path_leaf_collision_ok(self):
         # 'hardware/nut' must not be flagged just because 'nut' is a food bucket
         data = self._inv([{"id": "nut-1", "metadata": {"categories": ["hardware/nut"]}}])

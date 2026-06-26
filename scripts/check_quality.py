@@ -77,7 +77,6 @@ DEFAULT_BROAD_CATEGORIES = {
     "cereals",
     "legume",
     "legumes",
-    "bread",
     "bakery",
     "snack",
     "snacks",
