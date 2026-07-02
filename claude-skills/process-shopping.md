@@ -108,10 +108,12 @@ shopping-list generator and expiry tracking, and `check_quality.py` **fails**
 on them (`vegetables`, `fruit`, `nuts`, `meat`, `dairy`, `cheese`, `misc`, …).
 A broad/parent category is allowed only when no narrower concept fits — then
 exempt that item with the tag `category-broad-ok` (or run with
-`--allow-broad-categories`). Get the canonical slug from tingbok:
-`GET /api/lookup/{term}` returns the `id` to use. A category new to your
-inventory won't be in the local `vocabulary.json` yet — that's expected; ask
-tingbok, don't invent one. Watch mistranslated receipt names (Bulgarian
+`--allow-broad-categories`). Get the canonical slug with
+`inventory-md vocabulary lookup TERM` — it reports the concept `id` to use,
+checks the local `vocabulary.json` first and transparently queries tingbok for
+concepts not yet in it (exit code 1 in that case, with the tingbok result still
+printed — that's expected for a category new to your inventory). Don't invent
+slugs, and don't hand-roll `curl` calls to `/api/lookup/`. Watch mistranslated receipt names (Bulgarian
 `КАРТОФИ ЛИЛАВИ` "purple potatoes" were actually purple **sweet** potatoes).
 
 **Quantities — count, not weight.** For by-weight produce, `qty` is the piece
@@ -272,6 +274,10 @@ category/inventory_id) through the reviewed staging flow.
 
 `tingbok` (`GET/PUT /api/ean/{ean}`, `GET /api/ean/search?receipt_name=`) is the
 EAN/category/price aggregator. There is **no `ean_cache.json`** — use tingbok.
+Category/concept lookup goes through `inventory-md vocabulary lookup TERM` (no
+raw curl). Ad-hoc **EAN** lookup (an EAN that didn't come through
+`extract_barcodes.py`, which resolves scanned codes itself) has no wrapper yet —
+a read-only `curl GET /api/ean/{ean}` is the sanctioned fallback for that one case.
 
 ## TODO
 
@@ -298,6 +304,11 @@ This skill and the scripts are quite fresh.  For each run, try to pinpoint probl
     while `qty:3 mass:150g` (per-pack) was the original wish — pick one and document it.
   * The "rename ledger `qty`→`purchase-qty`" idea is **not** worth doing: the importer
     already distinguishes `mass`/`volume` from the count, so it would be churn.
+* Ad-hoc EAN lookup (2026-07-02): category lookups now go through
+  `inventory-md vocabulary lookup`, but looking up a *manually read* EAN (from a
+  photo the scanner missed) still needs a raw `curl GET /api/ean/{ean}` →
+  permission prompt. Consider `inventory-md ean EAN` or a `tingbok_lookup.py`
+  helper so the whole skill runs unattended.
 * Shop OSM cache too coarse — Lidl/Billa have **many branches per city**, so even
   "Lidl Varna" names one specific store.
   * Done: `match_shop_osm` now refuses to silently pick among multiple matches (returns
