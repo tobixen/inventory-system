@@ -14,6 +14,7 @@ from check_quality import (  # noqa: E402
     apply_fixes,
     check_broad_categories,
     check_food_without_bb,
+    check_shop_specific_eans,
     load_inventory_lang,
     run_all_checks,
 )
@@ -255,3 +256,48 @@ class TestArgparse:
             with pytest.raises(SystemExit) as exc:
                 cq_main()
             assert exc.value.code != 0
+
+
+class TestShopSpecificEans:
+    def test_bare_instore_code_flagged(self):
+        # GS1 restricted range (first digit 2): shop-local, must be prefixed.
+        data = _inv([{"id": "lidl-item", "metadata": {"ean": "20241988"}}])
+        issues = check_shop_specific_eans(data)
+        assert issues
+        assert "20241988" in issues[0]
+        assert "lidl-item" in issues[0]
+
+    def test_thirteen_digit_instore_code_flagged(self):
+        # A 13-digit code in the restricted range is still shop-local.
+        data = _inv([{"id": "gloves", "metadata": {"ean": "2007000369012"}}])
+        assert check_shop_specific_eans(data)
+
+    def test_biltema_article_number_flagged(self):
+        # Biltema catalogue numbers don't start with 2 and aren't a GTIN length.
+        data = _inv([{"id": "flag", "metadata": {"ean": "463491"}}])
+        issues = check_shop_specific_eans(data)
+        assert issues
+        assert "463491" in issues[0]
+
+    def test_valid_gtin8_not_starting_with_2_ok(self):
+        # A genuine 8-digit GTIN-8 outside the restricted range passes.
+        data = _inv([{"id": "widget", "metadata": {"ean": "40001234"}}])
+        assert check_shop_specific_eans(data) == []
+
+    def test_shop_prefixed_ok(self):
+        data = _inv(
+            [
+                {"id": "flag", "metadata": {"ean": "biltema-463491"}},
+                {"id": "cheese", "metadata": {"ean": "lidl-20241988"}},
+            ]
+        )
+        assert check_shop_specific_eans(data) == []
+
+    def test_normal_gtin_ok(self):
+        # Ordinary global GTIN (not in the restricted range) is fine as-is.
+        data = _inv([{"id": "epoxy", "metadata": {"ean": "4250153632306"}}])
+        assert check_shop_specific_eans(data) == []
+
+    def test_no_ean_ignored(self):
+        data = _inv([{"id": "misc", "metadata": {"categories": ["misc"]}}])
+        assert check_shop_specific_eans(data) == []

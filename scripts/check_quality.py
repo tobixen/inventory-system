@@ -447,6 +447,56 @@ def check_containers_without_images(data: dict) -> list:
     return [f"No images: {len(no_images)} containers have no photos"]
 
 
+# An EAN already namespaced with a shop name, e.g. ``biltema-463491`` or
+# ``lidl-20241988``. A real GTIN never contains a hyphen, so a hyphenated key
+# is a shop-prefixed local code (matching tingbok's own convention).
+_SHOP_PREFIXED_EAN = re.compile(r"^[A-Za-z][A-Za-z0-9]*-")
+
+
+def check_shop_specific_eans(data: dict) -> list:
+    """Flag shop-local article numbers stored as a bare, un-prefixed EAN.
+
+    GS1 reserves the "2" prefix (the whole first-digit-2 range) for
+    restricted / in-store / variable-measure codes. Such numbers are assigned
+    by the shop and are *not globally unique* — different chains reuse the same
+    number for different products — so they must be namespaced as
+    ``EAN:<shop>-<code>`` (e.g. ``lidl-20241988``, ``biltema-463491``) to avoid
+    cross-shop collisions. tingbok stores them under shop-prefixed keys; the
+    bare code may still resolve upstream (many Lidl codes are in Open Food
+    Facts), which is exactly why the shop namespace is needed to disambiguate.
+
+    Two kinds of shop-local code are flagged:
+
+    * **In-store barcodes** in the GS1 restricted range (first digit ``2``),
+      e.g. Lidl weighed-goods codes like ``20241988``.
+    * **Shop article numbers** that are not a valid GTIN length (8/12/13/14
+      digits), e.g. Biltema's ``463491`` (from ``Art. 46-3491``). These aren't
+      scannable barcodes at all, just catalogue numbers.
+
+    Values already carrying a ``<shop>-`` prefix pass; ordinary global GTINs
+    (valid length, first digit != 2) pass.
+    """
+    issues = []
+    for container in data.get("containers", []):
+        for item in container.get("items", []):
+            ean = item.get("metadata", {}).get("ean")
+            if not ean or _SHOP_PREFIXED_EAN.match(ean) or not ean.isdigit():
+                continue
+            if ean.startswith("2"):
+                reason = "in-store code (GS1 restricted range)"
+            elif len(ean) not in (8, 12, 13, 14):
+                reason = "shop article number (not a GTIN length)"
+            else:
+                continue
+            name = item.get("name") or item.get("raw_text", "")
+            item_id = item.get("id", "?")
+            issues.append(
+                f"Shop-local EAN lacks shop-name prefix in {container['id']}: "
+                f"{item_id} EAN:{ean} ({name[:40]}) — {reason}, use EAN:<shop>-{ean}"
+            )
+    return issues
+
+
 def load_vocabulary(inventory_path: Path, tingbok_url: str | None) -> dict:
     """Load vocabulary from tingbok and local files next to the inventory."""
     if not _VOCAB_AVAILABLE:
@@ -502,7 +552,9 @@ def run_all_checks(
     broad_categories: set[str] | None = None,
 ) -> tuple[dict, dict[str, str]]:
     """Run all quality checks and return (results, fix_map)."""
-    warnings = list(check_todo_items(data)) + list(check_items_without_category(data))
+    warnings = (
+        list(check_todo_items(data)) + list(check_items_without_category(data)) + list(check_shop_specific_eans(data))
+    )
     infos = check_empty_containers(data) + check_missing_descriptions(data) + check_containers_without_images(data)
     fix_map: dict[str, str] = {}
 
