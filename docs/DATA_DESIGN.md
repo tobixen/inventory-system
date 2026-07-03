@@ -87,6 +87,8 @@ Most articles sold in regular shops in the EU comes with barcodes - typically us
 
 There is a script to find barcodes in photos and look up the EAN from a database.  The EAN can also be used for adding things at the correct place in the inventory when resupplying.
 
+**Shop-local codes are namespaced.** Many shops sell items with a shop-local identifier and no global barcode. The `EAN:` field also holds these, prefixed with the (lowercase) shop name as `EAN:<shop>-<code>`. Two common patterns, both applying to *any* shop (the shops named are only examples): shop catalogue/article numbers (e.g. Biltema `Art. 46-3491` → `EAN:biltema-463491`) and in-store barcodes in the GS1 restricted range (first digit `2`, e.g. a Lidl weighed-goods code `20241988` → `EAN:lidl-20241988`). Such codes are not globally unique — different chains reuse the same number — so the shop prefix disambiguates. A real GTIN never contains a hyphen, so a hyphenated value is by definition a shop-prefixed local code (this is also how tingbok keys them). `check_quality.py` flags any un-prefixed shop-local code.
+
 ### ID - internal ID field
 
 Use internally for tracking purposes.  It may be almost anything - in my Solveig and Furuset instances they are often descriptive, and quite often I label boxes using a similar ID.

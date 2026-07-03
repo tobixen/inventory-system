@@ -45,14 +45,33 @@ This will:
 
 For items not in Open Food Facts, try manual lookups:
 
-**BILTEMA articles** (Art. XX-XXXXX format):
+**BILTEMA articles** (Art. XX-XXXXX format — a catalogue number, *not* a
+scannable EAN barcode):
 - Try: `https://www.biltema.no/search?q=XXXXX`
-- Record article number in inventory as `biltema:XX-XXXXX`
+- Record as a shop-prefixed EAN: `EAN:biltema-XXXXXX` (lowercase shop name,
+  hyphen dropped: `Art. 46-3491` → `EAN:biltema-463491`).
 
 **Clas Ohlson articles** (XX.XXXX-X format):
 - Try: `https://www.clasohlson.com/no/search?q=XXXXXXX`
+- Record as `EAN:clasohlson-XXXXXXX`.
 
-**EAN codes**: Always include in inventory as `EAN:XXXXXXXXXXXXX`
+**EAN codes**: Always include in inventory as `EAN:XXXXXXXXXXXXX`.
+
+**Shop-local codes generalise to any shop** — the shops named above are only
+examples. Any shop-local identifier with no global barcode gets prefixed with
+that shop's name: `EAN:<shop>-<code>` (`biltema-`, `clasohlson-`, `lidl-`,
+`kaufland-`, `praktiker-`, …). Two patterns:
+- **Catalogue / article numbers** (not scannable barcodes) — as with Biltema /
+  Clas Ohlson above.
+- **In-store barcodes** in the GS1 restricted range (first digit `2`), used by
+  many retailers for by-weight / loose goods, e.g. Lidl `20241988` →
+  `EAN:lidl-20241988`. These *are* scannable, but the number is assigned by the
+  shop and is **not globally unique** — different chains reuse the same number —
+  so the shop prefix disambiguates. (The bare code may still resolve in Open
+  Food Facts; that is exactly *why* the prefix is needed.)
+
+`check_quality.py` warns about both un-prefixed forms: first-digit-`2` in-store
+codes and bare numbers that aren't a valid GTIN length (catalogue numbers).
 
 **Always record from photos:**
 - EAN/UPC barcodes

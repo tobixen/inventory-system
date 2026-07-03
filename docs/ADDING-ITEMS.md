@@ -69,6 +69,30 @@ If tingbok returns "not found" (it found nothing and OFF has nothing either), th
 product is new: add it to the inventory now (above), and consider contributing it
 upstream ([below](#publishing-a-found-item-upstream)).
 
+### Shop-local codes: prefix with the shop name
+
+Not every code in the `EAN:` field is a global GTIN. Many shops sell items that
+carry a shop-local identifier and no global barcode. Any such code must be
+namespaced as `EAN:<shop>-<code>` (lowercase shop name). Two common patterns —
+both apply to *any* shop, not just the examples given:
+
+* **Shop catalogue / article numbers** — not scannable barcodes at all. E.g.
+  Biltema `Art. 46-3491` → `EAN:biltema-463491` (drop the internal hyphen);
+  likewise Clas Ohlson, Praktiker, etc.
+* **In-store barcodes** in the GS1 restricted range (first digit `2`), used by
+  many retailers for by-weight / loose goods. E.g. a Lidl weighed-goods code
+  `20241988` → `EAN:lidl-20241988`.
+
+Use whichever shop the item actually came from as the prefix (`biltema-`,
+`lidl-`, `kaufland-`, `praktiker-`, …).
+
+Why prefix: these numbers are **not globally unique** — different chains reuse
+the same number for different products — so the shop name is needed to
+disambiguate. (The bare code may still resolve in Open Food Facts; many in-store
+codes do. That is *why* the prefix matters.) tingbok stores such codes under the
+same shop-prefixed key; a real GTIN never contains a hyphen. `check_quality.py`
+warns about any un-prefixed shop-local code.
+
 ## Item Line Format
 
 Items are bullet points inside a container section in `inventory.md`:
