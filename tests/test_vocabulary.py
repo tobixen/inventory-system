@@ -2422,3 +2422,26 @@ class TestBuildPathAliasMapCache:
         m = vocabulary._build_path_alias_map(vocab, "en")
         assert m["food"] == "food"
         assert m["foods"] == "food"
+
+
+class TestEnrichCategoriesVerbosity:
+    """enrich_categories_via_lookup must be silent unless verbose=True."""
+
+    class _FakeResp:
+        status_code = 404
+
+    class _FakeSession:
+        def get(self, url, params=None, timeout=None):
+            return TestEnrichCategoriesVerbosity._FakeResp()
+
+    def test_quiet_by_default(self, capsys: pytest.CaptureFixture[str]):
+        vocabulary.enrich_categories_via_lookup(["zzz-nothing"], "https://tingbok.test", session=self._FakeSession())
+        assert capsys.readouterr().out == ""
+
+    def test_verbose_prints_progress(self, capsys: pytest.CaptureFixture[str]):
+        vocabulary.enrich_categories_via_lookup(
+            ["zzz-nothing"], "https://tingbok.test", session=self._FakeSession(), verbose=True
+        )
+        out = capsys.readouterr().out
+        assert "Looking up" in out
+        assert "not found" in out

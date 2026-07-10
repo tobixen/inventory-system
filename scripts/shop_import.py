@@ -96,23 +96,39 @@ def _new_item_row(receipt_name: str, price: float, qty: float, unit: str) -> dic
     }
 
 
-def parse_lidl_receipt(receipt: dict[str, Any], shop: str = "Lidl Varna") -> dict[str, Any]:
-    """Parse a single Lidl receipt dict into a staging structure (no candidates)."""
+def parse_lidl_receipt(
+    receipt: dict[str, Any], shop: str = "Lidl Varna", source: str = "lidl_receipts.json"
+) -> dict[str, Any]:
+    """Parse a receipt dict into a staging structure (no candidates).
+
+    Accepts both the Lidl JSON schema (``purchase_date``/``total_price_no_saving``,
+    item ``price`` = unit price) and a hand-transcribed receipt (``date``/``shop``/
+    ``currency``/``total``, item rows with explicit ``unit``, ``unit_price`` and
+    ``price`` = the printed line total).  Header keys present in the receipt win
+    over the ``shop``/``source`` arguments.
+    """
     items: list[dict[str, Any]] = []
     for raw in receipt.get("items", []):
         name = raw["name"]
-        price = parse_price(raw["price"])
         qty = parse_price(raw.get("quantity", "1"))
-        unit = "kg" if name.upper().rstrip().endswith(_KG_SUFFIX) else "pcs"
-        items.append(_new_item_row(name, price, qty, unit))
+        if "unit_price" in raw:
+            price = parse_price(raw["unit_price"])
+            line_total = parse_price(raw["price"])
+        else:
+            price = parse_price(raw["price"])
+            line_total = round(price * qty, 2)
+        unit = raw.get("unit") or ("kg" if name.upper().rstrip().endswith(_KG_SUFFIX) else "pcs")
+        row = _new_item_row(name, price, qty, unit)
+        row["line_total"] = line_total
+        items.append(row)
 
     return {
-        "session": _iso_date(receipt.get("purchase_date", "")),
-        "shop": shop,
+        "session": _iso_date(receipt.get("purchase_date") or receipt.get("date") or ""),
+        "shop": receipt.get("shop") or shop,
         "store": receipt.get("store"),
-        "currency": "EUR",
-        "receipt_total": parse_price(receipt.get("total_price_no_saving", "0")),
-        "source": "lidl_receipts.json",
+        "currency": receipt.get("currency", "EUR"),
+        "receipt_total": parse_price(receipt.get("total_price_no_saving", receipt.get("total", "0"))),
+        "source": source,
         "items": items,
         "loose_photos": [],
     }
@@ -220,11 +236,12 @@ def build_staging(
     receipt: dict[str, Any],
     *,
     shop: str = "Lidl Varna",
+    source: str = "lidl_receipts.json",
     searcher: Searcher,
     barcode_results: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Assemble the full staging structure: parsed rows + candidates + photos."""
-    staging = parse_lidl_receipt(receipt, shop=shop)
+    staging = parse_lidl_receipt(receipt, shop=shop, source=source)
     staging["loose_photos"] = build_loose_photos(barcode_results or [])
 
     for item in staging["items"]:
@@ -274,7 +291,9 @@ def main() -> None:  # pragma: no cover - thin CLI wiring
         barcode_results = json.loads(args.barcodes_json.read_text(encoding="utf-8"))
 
     searcher: Searcher = (lambda name, shop=None: []) if args.no_tingbok else _tingbok_searcher(args.tingbok_url)
-    staging = build_staging(receipt, shop=args.shop, searcher=searcher, barcode_results=barcode_results)
+    staging = build_staging(
+        receipt, shop=args.shop, source=args.receipt.name, searcher=searcher, barcode_results=barcode_results
+    )
 
     text = dump_yaml(staging)
     if args.out:

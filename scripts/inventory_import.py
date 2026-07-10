@@ -133,6 +133,7 @@ def import_staging(
     lang: str | None = None,
     default_container: str = "floating",
     today: date | None = None,
+    tingbok_url: str | None = None,
 ) -> list[tuple[dict[str, Any], str, Any]]:
     """Import all add-to-inventory rows; return one ``(item, action, detail)`` per row.
 
@@ -165,6 +166,7 @@ def import_staging(
             lang=lang,
             today=today,
             dry_run=not commit,
+            tingbok_url=tingbok_url,
             **kwargs,
         )
         # Reserve the id so later rows in the same batch see it (matters for the
@@ -221,6 +223,8 @@ def main() -> int:  # pragma: no cover - thin CLI wiring
         return 2
 
     staging = yaml.safe_load(args.staging.read_text(encoding="utf-8"))
+    from inventory_md.config import Config
+
     try:
         results = import_staging(
             staging,
@@ -230,6 +234,7 @@ def main() -> int:  # pragma: no cover - thin CLI wiring
             strict=args.strict,
             lang=args.lang,
             default_container=args.default_container,
+            tingbok_url=Config().tingbok_url,
         )
     except ValueError as e:
         print(f"❌ {e}", file=sys.stderr)

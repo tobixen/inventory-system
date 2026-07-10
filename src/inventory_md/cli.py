@@ -181,6 +181,7 @@ def parse_command(
     lang: str = None,
     tingbok_url: str | None = None,
     no_push: bool = False,
+    verbose: bool = False,
 ) -> int:
     """Parse inventory markdown file and generate JSON."""
     md_file = Path(md_file).resolve()
@@ -371,6 +372,7 @@ def parse_command(
                 }
                 if eans_found:
                     print(f"\n🔖 Looking up {len(eans_found)} EAN barcode(s) via tingbok...")
+                    ean_misses = 0
                     for ean, item in eans_found.items():
                         product = vocabulary.lookup_ean_via_tingbok(
                             ean, tingbok_url, session=tingbok_session, cache_dir=_tingbok_cache
@@ -384,11 +386,15 @@ def parse_command(
                             if cats:
                                 # Queue the most specific category for hierarchy resolution
                                 ean_category_labels.append(cats[-1])
-                                print(f"   EAN:{ean} → {desc} (category: {cats[-1]})")
-                            else:
+                                if verbose:
+                                    print(f"   EAN:{ean} → {desc} (category: {cats[-1]})")
+                            elif verbose:
                                 print(f"   EAN:{ean} → {desc} (no category)")
                         else:
-                            print(f"   EAN:{ean} → not found in tingbok")
+                            ean_misses += 1
+                            if verbose:
+                                print(f"   EAN:{ean} → not found in tingbok")
+                    print(f"   {len(eans_found) - ean_misses} resolved, {ean_misses} not in tingbok")
 
                     if no_push:
                         print("\n📤 Skipping EAN observation push (--no-push)")
@@ -432,7 +438,7 @@ def parse_command(
                 ]
                 if to_enrich:
                     resolved, category_mappings = vocabulary.enrich_categories_via_lookup(
-                        to_enrich, tingbok_url, session=tingbok_session, cache_dir=_tingbok_cache
+                        to_enrich, tingbok_url, session=tingbok_session, cache_dir=_tingbok_cache, verbose=verbose
                     )
                     if resolved:
                         vocab.update(resolved)
@@ -915,6 +921,12 @@ Examples:
         action="store_true",
         help="Skip pushing EAN observations back to tingbok (parse and look up only)",
     )
+    parse_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print per-EAN and per-category tingbok lookup lines (default: summaries only)",
+    )
     # Shopping-list command
     sl_parser = subparsers.add_parser(
         "shopping-list", help="Regenerate shopping-list.md from wanted-items.md and inventory.json"
@@ -1283,6 +1295,7 @@ Examples:
             lang=config.lang,
             tingbok_url=config.tingbok_url,
             no_push=getattr(args, "no_push", False),
+            verbose=getattr(args, "verbose", False),
         )
     elif args.command == "update-template":
         return update_template(args.directory)
@@ -1391,6 +1404,7 @@ def add_item_command(args, config: Config) -> int:
         check_bb=not args.no_bb_check,
         strict=args.strict,
         lang=config.lang or "en",
+        tingbok_url=config.tingbok_url,
     )
 
     for warning in result.warnings:
@@ -1665,6 +1679,7 @@ def vocabulary_command(args, config: Config) -> int:
                 [label],
                 tingbok_url=config.tingbok_url,
                 lang=lang,
+                verbose=True,  # interactive single-label lookup: show the progress line
             )
         except Exception as e:
             print(f"Tingbok lookup failed: {e}")

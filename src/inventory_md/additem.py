@@ -7,7 +7,8 @@ step:
 * duplicate ``ID:`` detection (across all containers and items)
 * food-without-best-before check (hard error unless disabled)
 * category resolution against the local vocabulary (warning, or error in
-  ``strict`` mode)
+  ``strict`` mode), with a tingbok fallback for categories new to this
+  inventory when ``tingbok_url`` is given
 
 The actual field parsing, container location, and food classification are reused
 from :mod:`inventory_md.parser`, :mod:`inventory_md.queries` and
@@ -18,7 +19,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,35 @@ class AddResult:
 def validate_bb_format(bb: str) -> bool:
     """True if ``bb`` is a recognised best-before format."""
     return bool(_BB_RE.match(bb))
+
+
+def _coerce_bb(bb: str | date | None) -> str | None:
+    """Normalise a best-before value to its string form.
+
+    Staging files are YAML, and YAML loads an unquoted ``bb: 2027-02-12`` as a
+    ``datetime.date`` — accept those instead of crashing in the regex check.
+    """
+    if isinstance(bb, datetime):  # before date: datetime is a date subclass
+        return bb.strftime("%Y-%m-%dT%H:%M")
+    if isinstance(bb, date):
+        return bb.isoformat()
+    return bb
+
+
+def _drop_tingbok_resolvable(labels: list[str], lang: str, tingbok_url: str) -> list[str]:
+    """Filter out category labels that resolve in tingbok's vocabulary.
+
+    The local vocabulary only knows categories already used in this inventory,
+    so the first use of a perfectly valid category would otherwise warn (or fail
+    ``--strict``) on every add.  When tingbok is unreachable the local verdict
+    stands.  Stubs tingbok returns for unknown labels don't count as resolved.
+    """
+    try:
+        remote = _vocabulary.resolve_vocabulary_from_tingbok(labels, tingbok_url, lang)
+    except Exception:
+        return labels
+    known = {cid: c for cid, c in remote.items() if c.source == "tingbok"}
+    return [label for label in labels if _vocabulary.resolve_category(label, known, lang) is None]
 
 
 def slugify(text: str) -> str:
@@ -193,7 +223,7 @@ def add_item(
     item_id: str | None = None,
     ean: str | None = None,
     isbn: str | None = None,
-    bb: str | None = None,
+    bb: str | date | None = None,
     bb_est: bool = False,
     qty: Any | None = None,
     mass: str | None = None,
@@ -207,6 +237,7 @@ def add_item(
     lang: str | None = None,
     today: date | None = None,
     dry_run: bool = False,
+    tingbok_url: str | None = None,
 ) -> AddResult:
     """Validate and append an item line to ``md_path``.
 
@@ -228,17 +259,21 @@ def add_item(
         result.errors.append(f"Container ID:{container_id} not found in {md_path.name}")
         return result
 
-    # Category resolution against the local vocabulary.
+    # Category resolution against the local vocabulary, with a tingbok fallback:
+    # categories new to this inventory are fine if tingbok knows them.
     concepts = _queries._load_food_vocabulary(md_path)
     resolved_lang = lang or "en"
     unresolved = [
         c for c in category.split(",") if c and _vocabulary.resolve_category(c, concepts, resolved_lang) is None
     ]
+    if unresolved and tingbok_url:
+        unresolved = _drop_tingbok_resolvable(unresolved, resolved_lang, tingbok_url)
     if unresolved:
         msg = f"category does not resolve in local vocabulary: {', '.join(unresolved)}"
         (result.errors if strict else result.warnings).append(msg)
 
     # Best-before format and food check.
+    bb = _coerce_bb(bb)
     if bb is not None and not validate_bb_format(bb):
         result.errors.append(f"invalid best-before format: {bb!r} (use YYYY, YYYY-MM or YYYY-MM-DD)")
 

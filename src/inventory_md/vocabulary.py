@@ -1223,6 +1223,7 @@ def enrich_categories_via_lookup(
     lang: str = "en",
     session: niquests.Session | None = None,
     cache_dir: Path | None = None,
+    verbose: bool = False,
 ) -> tuple[dict[str, Concept], dict[str, list[str]]]:
     """Enrich category concepts via ``GET /api/lookup/{label}``.
 
@@ -1239,6 +1240,10 @@ def enrich_categories_via_lookup(
         cache_dir:   Directory for the client-side lookup cache.  Successful
                      results are cached for :data:`_LOOKUP_CACHE_TTL_DAYS` days.
                      Pass ``None`` to disable (default).
+        verbose:     Print per-label progress lines.  Quiet by default so batch
+                     callers (``inventory-md parse``, the shopping pipeline)
+                     don't drown their own output; failures still go to the
+                     debug log either way.
 
     Returns:
         Tuple of:
@@ -1250,6 +1255,10 @@ def enrich_categories_via_lookup(
     """
     import niquests
 
+    def say(*args: Any, **kwargs: Any) -> None:
+        if verbose:
+            print(*args, **kwargs)
+
     getter = session.get if session is not None else niquests.get
     base = tingbok_url.rstrip("/")
     new_concepts: dict[str, Concept] = {}
@@ -1257,7 +1266,7 @@ def enrich_categories_via_lookup(
 
     total = len(labels)
     for i, label in enumerate(labels, 1):
-        print(f"   [{i}/{total}] Looking up {label!r} ...", end=" ", flush=True)
+        say(f"   [{i}/{total}] Looking up {label!r} ...", end=" ", flush=True)
         # Normalize the query label for SKOS sources: use the leaf node of a path,
         # replace hyphens with spaces, and strip OFF-style language tag prefixes
         # (e.g. "en:mashed-vegetables" → "mashed vegetables", "sk:džem" → "džem").
@@ -1273,13 +1282,13 @@ def enrich_categories_via_lookup(
             entry = _cache_read(cache_path, _LOOKUP_CACHE_TTL_DAYS)
             if entry is not None:
                 data = entry.get("data")
-                print("(cached)", end=" ", flush=True)
+                say("(cached)", end=" ", flush=True)
 
         if data is None:
             try:
                 response = getter(f"{base}/api/lookup/{query_label}", params={"lang": lang}, timeout=120.0)
                 if response.status_code == 404:
-                    print("not found")
+                    say("not found")
                     logger.debug("No lookup result for %r", label)
                     if cache_dir is not None:
                         _cache_write(cache_path, data=None)
@@ -1289,12 +1298,12 @@ def enrich_categories_via_lookup(
                 if cache_dir is not None:
                     _cache_write(cache_path, data=data)
             except Exception as exc:
-                print(f"error: {exc}")
+                say(f"error: {exc}")
                 logger.debug("Concept lookup failed for %r: %s", label, exc)
                 continue
 
         concept_id: str = data.get("id", label)
-        print(f"→ {concept_id}")
+        say(f"→ {concept_id}")
 
         # Convert VocabularyConcept format → Concept (same as fetch_vocabulary_from_tingbok)
         data["altLabels"] = data.pop("altLabel", {})

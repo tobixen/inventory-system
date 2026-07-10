@@ -83,6 +83,46 @@ class TestParseLidlReceipt:
         assert item["needs_review"] is True
 
 
+# A hand-transcribed receipt (no shop JSON API): header keys date/shop/currency/
+# total, item rows carrying explicit unit, per-unit price and printed line total.
+GENERIC_RECEIPT = {
+    "date": "2026-07-08",
+    "shop": "Бурлекс Галата",
+    "currency": "EUR",
+    "total": 49.25,
+    "items": [
+        {"name": "ДОМАТИ РОЗОВИ", "quantity": 0.506, "unit": "kg", "unit_price": 2.15, "price": 1.09},
+        {"name": "ПУРИЧКИ ВАФЛЕНИ ТАГО КАКАО 150Г", "quantity": 1, "unit_price": 1.65, "price": 1.65},
+    ],
+}
+
+
+class TestParseGenericReceipt:
+    """Regression: a hand-transcribed receipt used to get the Lidl header
+    (shop 'Lidl Varna', receipt_total 0.0, source 'lidl_receipts.json')."""
+
+    def test_header_comes_from_receipt_keys(self):
+        staging = parse_lidl_receipt(GENERIC_RECEIPT, shop="Lidl Varna", source="receipt-2026-07-08-burlex.json")
+        assert staging["session"] == "2026-07-08"
+        assert staging["shop"] == "Бурлекс Галата"  # receipt overrides the CLI default
+        assert staging["receipt_total"] == 49.25
+        assert staging["currency"] == "EUR"
+        assert staging["source"] == "receipt-2026-07-08-burlex.json"
+
+    def test_weighed_item_honors_explicit_unit_and_unit_price(self):
+        row = parse_lidl_receipt(GENERIC_RECEIPT)["items"][0]
+        assert row["unit"] == "kg"
+        assert row["qty"] == 0.506
+        assert row["price"] == 2.15  # per-kg price
+        assert row["line_total"] == 1.09  # printed line amount stays authoritative
+
+    def test_pcs_item_with_unit_price(self):
+        row = parse_lidl_receipt(GENERIC_RECEIPT)["items"][1]
+        assert row["unit"] == "pcs"
+        assert row["price"] == 1.65
+        assert row["line_total"] == 1.65
+
+
 class TestFindDateCandidates:
     def test_iso_date(self):
         assert "2026-06-12" in find_date_candidates("Best before 2026-06-12")

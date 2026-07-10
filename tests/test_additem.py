@@ -275,3 +275,111 @@ def test_add_item_unknown_container_errors(inventory_dir: Path):
         bb="2026-07",
     )
     assert any("does-not-exist" in e for e in result.errors)
+
+
+# --- bb as datetime.date (YAML loads unquoted dates as date objects) ---------
+
+
+def test_add_item_accepts_date_object_bb(inventory_dir: Path):
+    """Staging YAML gives ``bb: 2027-02-12`` as datetime.date — must not crash."""
+    md_path = inventory_dir / "inventory.md"
+    result = additem.add_item(
+        md_path,
+        container_id="food1",
+        category="milk",
+        item_id="milk-dated",
+        bb=date(2027, 2, 12),
+        name="Milk with date-typed bb",
+    )
+    assert not result.errors
+    assert "bb:2027-02-12" in md_path.read_text(encoding="utf-8")
+
+
+# --- tingbok fallback for categories new to this inventory -------------------
+
+
+def _fake_resolver(concepts: dict):
+    def fake_resolve(labels, url, lang="en", session=None):
+        return concepts
+
+    return fake_resolve
+
+
+def test_add_item_category_resolving_in_tingbok_no_warning(inventory_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    """A category unknown locally but valid in tingbok must not warn."""
+    from inventory_md import vocabulary
+
+    monkeypatch.setattr(
+        additem._vocabulary,
+        "resolve_vocabulary_from_tingbok",
+        _fake_resolver({"zzz-novel": vocabulary.Concept(id="zzz-novel", prefLabel="Novel", source="tingbok")}),
+    )
+    md_path = inventory_dir / "inventory.md"
+    result = additem.add_item(
+        md_path,
+        container_id="food1",
+        category="zzz-novel",
+        item_id="novel-1",
+        name="Novel thing",
+        tingbok_url="https://tingbok.test",
+    )
+    assert not result.errors
+    assert not any("does not resolve" in w for w in result.warnings)
+
+
+def test_add_item_category_unknown_everywhere_still_warns(inventory_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    """Tingbok returns only an inventory-sourced stub → the warning stays."""
+    from inventory_md import vocabulary
+
+    monkeypatch.setattr(
+        additem._vocabulary,
+        "resolve_vocabulary_from_tingbok",
+        _fake_resolver({"zzz-novel": vocabulary.Concept(id="zzz-novel", prefLabel="zzz-novel", source="inventory")}),
+    )
+    md_path = inventory_dir / "inventory.md"
+    result = additem.add_item(
+        md_path,
+        container_id="food1",
+        category="zzz-novel",
+        item_id="novel-2",
+        name="Novel thing",
+        tingbok_url="https://tingbok.test",
+    )
+    assert any("does not resolve" in w for w in result.warnings)
+
+
+def test_add_item_category_warning_kept_when_tingbok_offline(inventory_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    from inventory_md import vocabulary
+
+    def fake_resolve(labels, url, lang="en", session=None):
+        raise vocabulary.TingbokUnavailableError("offline")
+
+    monkeypatch.setattr(additem._vocabulary, "resolve_vocabulary_from_tingbok", fake_resolve)
+    md_path = inventory_dir / "inventory.md"
+    result = additem.add_item(
+        md_path,
+        container_id="food1",
+        category="zzz-novel",
+        item_id="novel-3",
+        name="Novel thing",
+        tingbok_url="https://tingbok.test",
+    )
+    assert any("does not resolve" in w for w in result.warnings)
+
+
+def test_add_item_no_tingbok_url_stays_offline(inventory_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    """Without tingbok_url the fallback must not be attempted at all."""
+
+    def boom(labels, url, lang="en", session=None):
+        raise AssertionError("tingbok must not be queried when tingbok_url is None")
+
+    monkeypatch.setattr(additem._vocabulary, "resolve_vocabulary_from_tingbok", boom)
+    md_path = inventory_dir / "inventory.md"
+    result = additem.add_item(
+        md_path,
+        container_id="food1",
+        category="zzz-novel",
+        item_id="novel-4",
+        name="Novel thing",
+    )
+    assert any("does not resolve" in w for w in result.warnings)

@@ -140,6 +140,17 @@ for every `ean` you assign, compare the tingbok record to what you bought:
 
 Batch these flags into one round of questions rather than asking item-by-item.
 
+**Label-photo cross-check — verify the photo belongs to the product.** Photos
+arrive as an ordered stream and adjacent products' label shots are easy to
+mix up. Before taking a `bb`, mass or EAN from a label photo, check every
+cross-referencable number printed on that label against the receipt line you
+are assigning it to — most usefully the **net weight** (`Нето:`/`kg ℮`), also
+unit price or line price on deli labels. A mismatch means the photo belongs to
+a *different* receipt line (real case: a `0,120 kg` бекон label was almost
+booked as the `0,420 kg` кебапчета, giving the bacon a week-too-short
+estimated bb). If nothing on the label matches anything on the receipt, ask
+the user which product it belongs to.
+
 ## Stage 3 — commit (script + thin AI, gated)
 
 **Drive it with `pipeline.py` — one command, not a hand-chained pipeline.**
@@ -242,9 +253,14 @@ curated YAML with front/ingredients/nutrition/packaging photos:
     --no-products --category-price "en:baguettes=0.17,was=0.45,type=SALE"
 ```
 Shop location is a **confirmed** OSM object (cached per shop), never auto-geocoded
-— receipt photos are often taken away from the shop. PRODUCT prices must not set
-`price_per`. Both OFF and Open Prices are **public** — treat as irreversible-ish
-(Open Prices rows are deletable; you own them).
+— receipt photos are often taken away from the shop. To get that confirmation
+cheaply, give the user the object's map link to eyeball —
+`https://www.openstreetmap.org/node/NNN` (or `/way/NNN`) — e.g. open it with
+`xdg-open`; a Nominatim name match alone is not confirmation (chains have many
+branches, and OSM's mapped address may differ from the receipt's legal address
+even for the right store). PRODUCT prices must not set `price_per`. Both OFF
+and Open Prices are **public** — treat as irreversible-ish (Open Prices rows
+are deletable; you own them).
 
 ## Queries
 
@@ -315,3 +331,26 @@ This skill and the scripts are quite fresh.  For each run, try to pinpoint probl
     nothing and lists the candidates); cache keys re-keyed to include the branch street.
   * When caching a new shop, key it by branch (shop + street), and confirm the OSM object
     is that exact store before publishing Open Prices.
+* Fixed 2026-07-09 (Бурлекс run friction):
+  * `add_item` crashed on YAML-native dates (`bb: 2026-07-12` → `datetime.date`) —
+    now coerced; staging bb values no longer need quoting.
+  * `shop_import.py` stamped the Lidl header (shop/total/source) onto hand-transcribed
+    receipts — the generic keys `date`/`shop`/`currency`/`total` and per-item
+    `unit`/`unit_price` are now honoured.
+  * "category does not resolve in local vocabulary" warned for every category merely
+    *new to this inventory* — `add_item` now falls back to tingbok before warning.
+  * `inventory-md parse` dumped one line per EAN/category lookup (hundreds of lines,
+    drowning the pipeline output) — per-item lines now need `parse --verbose`;
+    default prints summary counts only.
+* `extract_barcodes.py` misses/misreads (2026-07-08: two clearly-photographed EANs
+  read manually; one deli label gave three conflicting checksum-valid reads).
+  Tuning needs real data: processed barcode/label photos are now **kept** (moved to
+  `~/s/photos.tobixen/processed/`, see personal skill) instead of deleted — the
+  staging files map filename → confirmed EAN/bb, so they double as a labelled
+  training/regression corpus. When enough accumulate, build a regression suite for
+  the extractor and try multi-crop/rotation retries; report multiple checksum-valid
+  candidates as needs-review instead of picking one.
+* `inventory-md` has no `edit ID --bb … --mass …` subcommand, so correcting a field
+  on an existing line is still a (sanctioned) hand-edit of inventory.md — the last
+  remaining reason to touch the markdown by hand (bit us 2026-07-09: bacon bb/mass
+  correction from late-surfacing label photos).
