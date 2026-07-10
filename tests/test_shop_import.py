@@ -8,8 +8,11 @@ left to a later AI review step that edits the staging file.
 
 import sys
 
+import pytest
+
 sys.path.insert(0, str(__file__).rsplit("/tests/", 1)[0] + "/scripts")
 from shop_import import (  # noqa: E402
+    _tingbok_searcher,
     build_loose_photos,
     build_staging,
     classify_photo_result,
@@ -285,3 +288,29 @@ class TestBuildStaging:
 
         staging = build_staging(LIDL_RECEIPT, shop="Lidl Varna", searcher=shop_strict_searcher, barcode_results=[])
         assert staging["items"][1]["ean_candidates"]  # milk still has a candidate
+
+
+@pytest.mark.integration
+class TestTingbokSearcherLive:
+    """Live contract of tingbok's reverse receipt-name search (score semantics).
+
+    Observations are never deleted from tingbok, so a receipt name pushed on a
+    past shopping trip is a stable fixture. The process-shopping guide's rule
+    rests on this contract: an exactly-seen receipt name returns its EAN as the
+    top candidate with score 1.0 ("repeat purchase — trust it"), while an
+    unseen name yields at most fuzzy score<1.0 suggestions ("needs review").
+    """
+
+    def test_repeat_purchase_matches_exactly_at_score_1(self):
+        search = _tingbok_searcher()
+        # Pushed 2026-07-06 (Май Маркет "Радост" trip): Верея fresh milk.
+        results = search("ПР МЛЯКО ВЕРЕЯ ЧУДНО 1Л")
+        assert results, "no candidate for a previously pushed receipt name"
+        top = results[0]
+        assert top["ean"] == "3800748051206"
+        assert top["score"] == 1.0
+
+    def test_unseen_name_never_scores_1(self):
+        search = _tingbok_searcher()
+        results = search("ZZZ НЕСЪЩЕСТВУВАЩ ПРОДУКТ 999Г")
+        assert all(r["score"] < 1.0 for r in results)
