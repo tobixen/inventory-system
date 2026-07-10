@@ -140,16 +140,29 @@ for every `ean` you assign, compare the tingbok record to what you bought:
 
 Batch these flags into one round of questions rather than asking item-by-item.
 
-**Label-photo cross-check — verify the photo belongs to the product.** Photos
-arrive as an ordered stream and adjacent products' label shots are easy to
-mix up. Before taking a `bb`, mass or EAN from a label photo, check every
-cross-referencable number printed on that label against the receipt line you
-are assigning it to — most usefully the **net weight** (`Нето:`/`kg ℮`), also
-unit price or line price on deli labels. A mismatch means the photo belongs to
-a *different* receipt line (real case: a `0,120 kg` бекон label was almost
-booked as the `0,420 kg` кебапчета, giving the bacon a week-too-short
-estimated bb). If nothing on the label matches anything on the receipt, ask
-the user which product it belongs to.
+**Matching receipt lines to scanned EANs/label photos.** Two regimes:
+
+- **Repeat purchase (same product, same shop)** — algorithmic. The previous
+  trip pushed the receipt name to tingbok, so the importer's `ean_candidates`
+  carry the right EAN with **`score: 1.0`** (an exact prior observation —
+  trust it). Verified 2026-07-10: all seven Бурлекс names from the day before
+  resolved 1.0 to the correct EAN; even truncated/partial/other-shop till
+  strings ranked the right product first at ~0.6–0.7.
+- **New purchase** — no algorithm settles it; a candidate with **`score < 1.0`
+  is only a fuzzy suggestion** and can be plausibly wrong (a never-seen name
+  still returns somebody else's product at ~0.68). Matching the receipt line
+  to the scanned barcodes and label photos is AI/human work.
+
+For new purchases, corroborate wherever the material allows: photos arrive as
+an ordered stream and adjacent products' label shots are easy to mix up, so if
+the label prints a cross-referencable number — **net weight** (`Нето:`/`kg ℮`),
+unit or line price on deli labels — check it against the receipt line before
+taking a `bb`, mass or EAN from that photo (real case: a `0,120 kg` бекон
+label was almost booked as the `0,420 kg` кебапчета). Often there is **no**
+such number — that's normal, and the rule is simply: **any doubt → the user
+verifies.** And **flag missing-in-OFF products immediately** when discovered
+(not at the Stage-4 upload), while the product is still around and unopened
+for front/ingredients/nutrition/packaging photos.
 
 ## Stage 3 — commit (script + thin AI, gated)
 
