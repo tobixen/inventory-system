@@ -2,6 +2,7 @@
 
 # Import the module under test
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -485,3 +486,83 @@ class TestOutOption:
 
         assert out_file.read_text().strip() == "[]"  # JSON payload landed in the file
         assert capsys.readouterr().out == ""  # ... and nothing leaked to stdout
+
+
+class TestTextQuality:
+    """_text_quality scores an OCR pass so extract_text_ocr_oriented can pick the
+    orientation. Sideways photos OCR into 1-2 char fragments (score ~0); an
+    upright label/receipt scores several points."""
+
+    def test_garbage_fragments_score_zero(self):
+        from extract_barcodes import _text_quality
+
+        # The real sideways-OCR signature seen on rotated phone photos.
+        garbage = [
+            {"text": "1", "confidence": 0.9},
+            {"text": "0", "confidence": 0.8},
+            {"text": "Il", "confidence": 0.7},
+            {"text": "$", "confidence": 0.6},
+        ]
+        assert _text_quality(garbage) == 0.0
+
+    def test_real_words_accumulate_confidence(self):
+        from extract_barcodes import _text_quality
+
+        good = [
+            {"text": "Най-добър до", "confidence": 0.9},
+            {"text": "2026-12-15", "confidence": 0.8},
+            {"text": "x", "confidence": 0.95},  # short token ignored
+        ]
+        assert _text_quality(good) == pytest.approx(1.7)
+
+
+class TestExtractTextOcrOriented:
+    """extract_text_ocr_oriented retries rotations only when 0° reads as garbage,
+    and returns the best-scoring orientation."""
+
+    def test_upright_photo_skips_rotation(self):
+        import extract_barcodes
+
+        # A real upright label reads as several confident tokens, clearing accept_score.
+        good = [
+            {"text": "Дюрум", "confidence": 0.92},
+            {"text": "Голям", "confidence": 0.9},
+            {"text": "350гр", "confidence": 0.88},
+            {"text": "Най-добър до", "confidence": 0.85},
+        ]
+        calls = []
+
+        def fake(image_path, languages=None, min_confidence=0.3, angles=None):
+            calls.append(angles)
+            return good  # every orientation "reads" fine
+
+        with patch.object(extract_barcodes, "extract_text_ocr", fake):
+            out = extract_barcodes.extract_text_ocr_oriented(Path("x.jpg"))
+
+        assert out == good
+        assert calls == [[0]]  # cleared accept_score on first pass; no retries
+
+    def test_rotated_photo_picks_best_orientation(self):
+        import extract_barcodes
+
+        by_angle = {
+            0: [{"text": "1", "confidence": 0.9}, {"text": "$", "confidence": 0.8}],  # garbage
+            90: [{"text": "og", "confidence": 0.5}],  # still poor
+            270: [
+                {"text": "Най-добър до", "confidence": 0.9},
+                {"text": "2026-12-15", "confidence": 0.85},
+            ],  # correct orientation
+            180: [{"text": "xx", "confidence": 0.9}],
+        }
+        calls = []
+
+        def fake(image_path, languages=None, min_confidence=0.3, angles=None):
+            calls.append(angles[0])
+            return by_angle[angles[0]]
+
+        with patch.object(extract_barcodes, "extract_text_ocr", fake):
+            out = extract_barcodes.extract_text_ocr_oriented(Path("x.jpg"))
+
+        assert out == by_angle[270]
+        assert calls[0] == 0  # tried 0° first
+        assert 270 in calls  # ... then rotations

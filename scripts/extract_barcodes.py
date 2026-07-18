@@ -166,6 +166,7 @@ def extract_text_ocr(
     languages: list[str] | None = None,
     min_confidence: float = 0.3,
     rotation_info: list[int] | None = None,
+    angles: list[int] | None = None,
 ) -> list[dict]:
     """
     Extract text from an image using OCR.
@@ -195,8 +196,11 @@ def extract_text_ocr(
             img.thumbnail((2600, 2600))
 
         # Optional extra orientations (PIL-rotated ourselves; easyocr's own
-        # rotation_info crashes on some images).
-        angles = [0, *(rotation_info or [])]
+        # rotation_info crashes on some images). An explicit `angles` list wins
+        # (used by extract_text_ocr_oriented to OCR one orientation at a time);
+        # otherwise 0° plus any legacy `rotation_info` extras.
+        if angles is None:
+            angles = [0, *(rotation_info or [])]
         extracted = []
         for angle in angles:
             arr = np.asarray(img.rotate(-angle, expand=True) if angle else img)
@@ -214,6 +218,50 @@ def extract_text_ocr(
     except Exception as e:
         print(f"OCR failed for {image_path}: {e}", file=sys.stderr)
         return []
+
+
+def _text_quality(ocr_results: list[dict]) -> float:
+    """Heuristic quality score for one OCR pass.
+
+    Summed confidence over tokens carrying >=3 alphanumeric characters. A photo
+    shot sideways/upside-down OCRs into a scatter of 1-2 char fragments that
+    score ~0; a correctly-oriented label or receipt scores several points. Used
+    by extract_text_ocr_oriented to pick the best rotation.
+    """
+    score = 0.0
+    for r in ocr_results:
+        text = r.get("text", "")
+        if sum(c.isalnum() for c in text) >= 3:
+            score += float(r.get("confidence", 0.0))
+    return score
+
+
+def extract_text_ocr_oriented(
+    image_path: Path,
+    languages: list[str] | None = None,
+    min_confidence: float = 0.3,
+    accept_score: float = 3.0,
+) -> list[dict]:
+    """OCR with automatic rotation retry for photos shot sideways/upside-down.
+
+    Runs the EXIF-corrected 0° orientation first; if its text quality is poor
+    (a sign the photo is physically rotated with a missing/wrong EXIF tag), it
+    retries at 90°/270°/180° and returns the results from the best-scoring
+    orientation. Upright photos incur no extra cost — they clear ``accept_score``
+    on the first pass. See _text_quality for the scoring heuristic.
+    """
+    best = extract_text_ocr(image_path, languages=languages, min_confidence=min_confidence, angles=[0])
+    best_score = _text_quality(best)
+    if best_score >= accept_score:
+        return best
+    for angle in (90, 270, 180):
+        res = extract_text_ocr(image_path, languages=languages, min_confidence=min_confidence, angles=[angle])
+        score = _text_quality(res)
+        if score > best_score:
+            best, best_score = res, score
+            if best_score >= accept_score:
+                break
+    return best
 
 
 def extract_title_from_ocr(ocr_results: list[dict], min_confidence: float = 0.5) -> str | None:
@@ -750,9 +798,10 @@ def main():
     # easyocr forbids mixing Cyrillic with non-English Latin scripts; Bulgarian
     # labels need bg+en. (The plain --ocr default stays as-is for Latin/book OCR.)
     ocr_langs = ["bg", "en"] if bb_mode else None
-    # Orientation is handled via the EXIF tag (extract_text_ocr); shoot labels
-    # roughly upright. No brute-force rotation by default.
-    ocr_rot = None
+    # Orientation: extract_text_ocr_oriented honours the EXIF tag first, then
+    # auto-rotates (90/270/180) and retries when a photo reads as garbage —
+    # phone cameras often save labels/receipts physically rotated with no EXIF
+    # orientation, which otherwise loses the best-before date entirely.
 
     n_images = len(image_paths)
     for idx, image_path in enumerate(image_paths, 1):
@@ -775,7 +824,7 @@ def main():
                 print("Warning: OCR requested but easyocr not installed", file=sys.stderr)
                 print("Run: pip install easyocr", file=sys.stderr)
             else:
-                ocr_results = extract_text_ocr(image_path, languages=ocr_langs, rotation_info=ocr_rot)
+                ocr_results = extract_text_ocr_oriented(image_path, languages=ocr_langs)
                 if ocr_results:
                     title = extract_title_from_ocr(ocr_results)
                     all_text = " | ".join(r["text"] for r in ocr_results[:5])
@@ -819,7 +868,7 @@ def main():
                 print("Warning: --best-before needs easyocr (pip install easyocr)", file=sys.stderr)
             else:
                 if ocr_results is None:
-                    ocr_results = extract_text_ocr(image_path, languages=ocr_langs, rotation_info=ocr_rot)
+                    ocr_results = extract_text_ocr_oriented(image_path, languages=ocr_langs)
                 bb = extract_best_before(ocr_results or [])
                 for r in image_results:
                     r["best_before"] = bb["best"]
