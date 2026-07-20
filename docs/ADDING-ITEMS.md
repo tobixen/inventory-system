@@ -112,7 +112,7 @@ Fields may appear in any order but the human-readable description should come la
 | `category:` | Yes | What the item IS (see [Categories](#categories)) |
 | `ID:` | Yes | Unique identifier for cross-referencing |
 | `tag:` | Optional | Attributes: condition, ownership, colour, etc. |
-| `qty:` | Optional | Count of identical items |
+| `qty:` | Optional | Count of identical items. Omit it when the count is unknown — do **not** write `qty:1` as a placeholder. `qty:1` asserts *exactly one* (one carrot); a missing `qty` means "an unknown/unspecified amount" (a bag of carrots, count not recorded). See the [divisor convention](#quantities-and-measurements) for weighed goods. |
 | `mass:` | Optional | Net mass per unit (e.g. `mass:500g`, `mass:1.2kg`) |
 | `volume:` | Optional | Volume per unit (e.g. `volume:1l`, `volume:400ml`) |
 | `bb:` | Food/perishables | Best-before date (see [Best-before dates](#best-before-dates)) |
