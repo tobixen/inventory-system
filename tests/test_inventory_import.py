@@ -123,6 +123,48 @@ def test_kwargs_bb_source_marks_estimate():
     assert kw["bb_est"] is True
 
 
+def test_kwargs_bb_est_key_marks_estimate():
+    # The separate ``bb_est: true`` key is the form shop_import/review writes when
+    # the date is a shelf-life guess; it used to be dropped silently, recording the
+    # guess as a hard fact.
+    item = {"category": "rice", "bb": "2027-01-01", "bb_est": True, "location": "floating"}
+    kw = staging_item_to_kwargs(item, "EUR")
+    assert kw["bb"] == "2027-01-01"
+    assert kw["bb_est"] is True
+
+
+def test_kwargs_bb_est_key_and_suffix_agree():
+    item = {"category": "rice", "bb": "2027-01-01:EST", "bb_est": True, "location": "floating"}
+    kw = staging_item_to_kwargs(item, "EUR")
+    assert kw["bb"] == "2027-01-01"
+    assert kw["bb_est"] is True
+
+
+def test_kwargs_bb_est_false_conflicting_with_suffix_raises():
+    item = {"category": "rice", "bb": "2027-01-01:EST", "bb_est": False, "location": "floating"}
+    with pytest.raises(ValueError, match="EST"):
+        staging_item_to_kwargs(item, "EUR")
+
+
+def test_kwargs_explicit_bb_est_false_beats_bb_source_guess():
+    # bb_source is a free-text heuristic; an explicit flag is authoritative.
+    item = {
+        "category": "potatoes",
+        "bb": "2026-09",
+        "bb_est": False,
+        "bb_source": "shelf-life estimate",
+        "location": "floating",
+    }
+    kw = staging_item_to_kwargs(item, "EUR")
+    assert kw["bb_est"] is False
+
+
+def test_kwargs_non_boolean_bb_est_raises():
+    item = {"category": "rice", "bb": "2027-01-01", "bb_est": "yes", "location": "floating"}
+    with pytest.raises(ValueError, match="bb_est"):
+        staging_item_to_kwargs(item, "EUR")
+
+
 def test_kwargs_skip_when_add_to_inventory_false():
     item = {"category": "chewing-gum", "add_to_inventory": False, "location": "floating"}
     assert staging_item_to_kwargs(item, "EUR") is None
@@ -224,6 +266,29 @@ def test_import_staging_skips_existing_id(md_path: Path):
     results = import_staging(staging, md_path, commit=True)
     assert [a for _i, a, _r in results] == ["exists"]
     assert md_path.read_text(encoding="utf-8") == _MD
+
+
+def test_import_staging_writes_est_marker_for_bb_est_key(md_path: Path):
+    # End-to-end regression for the silently-dropped ``bb_est: true``: the written
+    # line must carry the :EST marker, not a bare (asserted) date.
+    staging = {
+        "session": "2026-07-21",
+        "currency": "EUR",
+        "items": [
+            {
+                "category": "rice",
+                "name": "Rice",
+                "bb": "2027-01-01",
+                "bb_est": True,
+                "location": "food1",
+                "inventory_id": "rice-2026-07-21",
+                "add_to_inventory": True,
+            },
+        ],
+    }
+    import_staging(staging, md_path, commit=True)
+    text = md_path.read_text(encoding="utf-8")
+    assert "bb:2027-01-01:EST" in text
 
 
 def test_import_staging_rejects_multishop(md_path: Path):

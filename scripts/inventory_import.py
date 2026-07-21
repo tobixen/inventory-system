@@ -67,15 +67,19 @@ def staging_item_to_kwargs(
     if not item.get("add_to_inventory", True):
         return None
 
-    # best-before: accept a ``:EST`` suffix or a bb_source that names an estimate.
-    bb = item.get("bb")
-    bb_est = False
-    if isinstance(bb, str) and bb.endswith(":EST"):
-        bb = bb[: -len(":EST")]
-        bb_est = True
-    source = (item.get("bb_source") or "").lower()
-    if any(token in source for token in ("est", "shelf", "inferred")):
-        bb_est = True
+    # Best-before: an estimate may be spelled inline (``bb: 2026-09:EST``) or as
+    # the separate ``bb_est: true`` key.  Both are honoured and must agree —
+    # ``resolve_bb_est`` raises on a contradiction rather than silently picking
+    # one, since dropping the estimate marker records a guess as a hard fact.
+    explicit_est = item.get("bb_est")
+    bb, bb_est = additem.resolve_bb_est(item.get("bb"), explicit_est)
+
+    # ``bb_source`` is free text, so it is only a heuristic: it can promote an
+    # unflagged date to an estimate, but never overrides an explicit ``bb_est``.
+    if explicit_est is None and not bb_est:
+        source = (item.get("bb_source") or "").lower()
+        if any(token in source for token in ("est", "shelf", "inferred")):
+            bb_est = True
 
     # quantity routing by unit
     unit = (item.get("unit") or "pcs").lower()

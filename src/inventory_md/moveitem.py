@@ -48,16 +48,19 @@ def _indent(line: str) -> int:
     return len(line) - len(line.lstrip())
 
 
-def find_item_block(lines: list[str], item_id: str) -> tuple[int, int] | None:
-    """Return ``(start, end)`` line indices of the item bullet ``ID:item_id``.
+def find_item_blocks(lines: list[str], item_id: str) -> list[tuple[int, int]]:
+    """Return ``(start, end)`` line indices for every item bullet ``ID:item_id``.
 
-    The block spans the bullet line plus any immediately following lines that are
+    Each block spans the bullet line plus any immediately following lines that are
     indented deeper than it (its sub-bullets / continuation lines).  The match is
     exact: ``ID:item_id`` must be a whole token (``rice`` does not match
     ``rice-1``) and the line must be a list bullet, so container headings carrying
-    the same ID token are ignored.  Returns ``None`` if no such item bullet exists.
+    the same ID token are ignored.  IDs are meant to be unique, so more than one
+    hit means the inventory is inconsistent — callers that rewrite a line
+    (``edit``) refuse rather than guess.
     """
     token = re.compile(r"(?:^|\s)ID:" + re.escape(item_id) + r"(?=\s|$)")
+    blocks: list[tuple[int, int]] = []
     for i, line in enumerate(lines):
         if not _is_bullet(line) or not token.search(line):
             continue
@@ -69,11 +72,17 @@ def find_item_block(lines: list[str], item_id: str) -> tuple[int, int] | None:
                 end += 1
             else:
                 break
-        return (i, end)
-    return None
+        blocks.append((i, end))
+    return blocks
 
 
-def _container_of_line(lines: list[str], line_index: int) -> str | None:
+def find_item_block(lines: list[str], item_id: str) -> tuple[int, int] | None:
+    """The first block of :func:`find_item_blocks`, or ``None`` if there is none."""
+    blocks = find_item_blocks(lines, item_id)
+    return blocks[0] if blocks else None
+
+
+def container_of_line(lines: list[str], line_index: int) -> str | None:
     """The ID of the nearest enclosing container heading above ``line_index``."""
     for i in range(line_index - 1, -1, -1):
         m = _HEADING_ID_RE.match(lines[i])
@@ -119,7 +128,7 @@ def move_item(
     start, end = block
     moved = lines[start:end]
     result.item_line = moved[0]
-    result.from_container = _container_of_line(lines, start)
+    result.from_container = container_of_line(lines, start)
 
     if dry_run:
         return result

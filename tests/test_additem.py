@@ -54,6 +54,47 @@ def test_format_item_line_multiple_categories_preserved():
     assert "category:oatmeal,breakfast" in line
 
 
+# --- resolve_bb_est ---------------------------------------------------------
+
+
+def test_resolve_bb_est_suffix_only():
+    assert additem.resolve_bb_est("2026-09:EST") == ("2026-09", True)
+
+
+def test_resolve_bb_est_plain_date_is_asserted():
+    assert additem.resolve_bb_est("2026-09") == ("2026-09", False)
+
+
+def test_resolve_bb_est_explicit_true_without_suffix():
+    assert additem.resolve_bb_est("2026-09", True) == ("2026-09", True)
+
+
+def test_resolve_bb_est_explicit_true_with_suffix_agrees():
+    assert additem.resolve_bb_est("2026-09:EST", True) == ("2026-09", True)
+
+
+def test_resolve_bb_est_explicit_false_conflicts_with_suffix():
+    with pytest.raises(ValueError, match="EST"):
+        additem.resolve_bb_est("2026-09:EST", False)
+
+
+def test_resolve_bb_est_explicit_false_without_suffix():
+    assert additem.resolve_bb_est("2026-09", False) == ("2026-09", False)
+
+
+def test_resolve_bb_est_coerces_yaml_date():
+    assert additem.resolve_bb_est(date(2026, 9, 1), True) == ("2026-09-01", True)
+
+
+def test_resolve_bb_est_none_bb():
+    assert additem.resolve_bb_est(None) == (None, False)
+
+
+def test_resolve_bb_est_rejects_non_boolean_flag():
+    with pytest.raises(ValueError, match="bb_est"):
+        additem.resolve_bb_est("2026-09", "yes")
+
+
 # --- validate_bb_format -----------------------------------------------------
 
 
@@ -293,6 +334,37 @@ def test_add_item_accepts_date_object_bb(inventory_dir: Path):
     )
     assert not result.errors
     assert "bb:2027-02-12" in md_path.read_text(encoding="utf-8")
+
+
+def test_add_item_accepts_est_suffix_in_bb(inventory_dir: Path):
+    """``bb="2026-07:EST"`` is a valid spelling of an estimate, as on a staging row."""
+    md_path = inventory_dir / "inventory.md"
+    result = additem.add_item(
+        md_path,
+        container_id="food1",
+        category="milk",
+        item_id="milk-est-suffix",
+        bb="2026-07:EST",
+        name="Milk",
+    )
+    assert not result.errors
+    assert "bb:2026-07:EST" in md_path.read_text(encoding="utf-8")
+
+
+def test_add_item_est_suffix_conflicting_with_bb_est_false_errors(inventory_dir: Path):
+    md_path = inventory_dir / "inventory.md"
+    result = additem.add_item(
+        md_path,
+        container_id="food1",
+        category="milk",
+        item_id="milk-conflict",
+        bb="2026-07:EST",
+        bb_est=False,
+        name="Milk",
+    )
+    assert result.errors
+    assert not result.written
+    assert "EST" in result.errors[0]
 
 
 # --- tingbok fallback for categories new to this inventory -------------------

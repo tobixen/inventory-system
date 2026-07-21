@@ -27,6 +27,36 @@ inventory-md add A2 --category hammer --id bosch-hammer "Bosch hammer"
 The rest of this document describes the underlying line format, for reference and
 for hand-editing.
 
+## Correcting an existing item line
+
+`add` is append-only, so use `inventory-md edit ID` to change a field on a line
+that is already in the file — a mistyped EAN, a best-before that turned up on a
+label photo after the import, a shop-local barcode that needs its chain prefix:
+
+```bash
+inventory-md edit bacon-2026-07-09 --ean 4056489080510 --bb 2026-07-24
+inventory-md edit yogurt-2026-07-21 --est          # the date was a guess, not printed
+inventory-md edit milk-2026-07-21 --no-est         # …and back again
+inventory-md edit pork-belly-2026-07-21 --mass 800g --dry-run
+inventory-md edit drill-bosch --tag condition:used --price EUR:89/pcs
+```
+
+- Supported fields: `--category`, `--name`, `--ean`, `--isbn`, `--bb` (with
+  `--est`/`--no-est`), `--qty`, `--mass`, `--volume`, `--price`, `--value` and
+  `--tag` (repeatable — the given tags *replace* the item's existing ones).
+- An empty value removes a field: `--bb ''` drops the best-before (rejected for
+  food unless `--no-bb-check`). `--category` cannot be removed.
+- `--est`/`--no-est` on their own flip the `:EST` marker on the date already on
+  the line; with `--bb`, a date may also carry its own suffix (`--bb 2026-08:EST`).
+  A suffix that contradicts `--no-est` is an error, never a silent pick.
+- Fields already on the line are substituted where they stand, so the line's own
+  field order survives; new fields are inserted at their canonical position.
+  Indented sub-bullets and the rest of the file are untouched.
+- The ID must match exactly one item bullet: an unknown ID, or a duplicated one,
+  is an error rather than a guess.
+- The same QA as `add` applies (category resolution, `--strict`,
+  food-without-`bb:`), and `--dry-run` shows the before/after line without writing.
+
 ## Moving an item between containers
 
 When you repack physical storage — emptying a shelf into a crate, consolidating
@@ -193,6 +223,13 @@ If the date is estimated rather than printed on the product, append `:EST`:
 * category:milk bb:2026-06-12 Whole milk 1l
 * category:potatoes bb:2026-08:EST qty:4 mass:1200g/6 Potatoes
 ```
+
+In a staging file the estimate may be spelled either way — `bb: 2026-08:EST`, or
+`bb: 2026-08` plus a separate `bb_est: true` — and both produce a `bb:…:EST`
+line. A `:EST` suffix contradicted by `bb_est: false` is a hard error, never a
+silent pick: recording a guess as a hard date is the outcome that must not happen
+quietly. To flip the marker on a line that is already in the inventory, use
+`inventory-md edit ID --est` / `--no-est`.
 
 Note: Norwegian law distinguishes a soft "best before (often still good)" from a hard "use by (safety deadline)". No convention exists yet in this system to distinguish them.
 

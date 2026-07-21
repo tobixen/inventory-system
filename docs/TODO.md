@@ -8,6 +8,12 @@
   applies it across a whole reviewed staging file in one pass (import
   `inventory_md.additem`, no CLI shell-out), so process-shopping Stage 3 no
   longer hand-edits `inventory.md`. See `docs/ADDING-ITEMS.md`.
+* ~~**`inventory-md` command to change a field on an existing item line.**~~ DONE
+  2026-07-22: `inventory-md edit ITEM_ID [--ean … --bb …[:EST] --est/--no-est
+  --mass … --qty … --price … --category … --name … --tag …]` rewrites one
+  unambiguous `ID:` bullet in place (field order and sub-bullets preserved, empty
+  value removes a field), with the same QA as `add` plus `--dry-run`. Together
+  with `add` and `move` this removes the last reason to hand-edit the markdown.
 * **Make manual photo inspection unnecessary in the shopping flow.** Goal: the
   agent never opens a product photo. `extract_barcodes.py`/`shop_import.py` should
   reliably (a) decode every barcode and (b) extract each best-before and attach it

@@ -201,7 +201,9 @@ driver runs*; run them individually only to debug.
    ~/inventory-md/scripts/inventory_import.py $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml --commit
    ```
    It reads each item's `location` (→ container), `category`, `inventory_id`,
-   `ean`, `bb` (`:EST` honoured), `qty`/`unit` (weighed lines → `mass`/`volume`)
+   `ean`, `bb` (an estimate marked either as a `:EST` suffix or as a separate
+   `bb_est: true` — both honoured, contradicting each other is an error),
+   `qty`/`unit` (weighed lines → `mass`/`volume`)
    and `price`, formats the line, inserts it in the right section, and runs the
    QA checks as part of the write: duplicate `ID:`, food-without-`bb:` (hard
    error; `--no-bb-check` to override for fresh produce), and category resolution
@@ -224,9 +226,22 @@ driver runs*; run them individually only to debug.
    same QA (duplicate-ID, category, bb) as the importer — so there is **still no
    reason to hand-edit `inventory.md`**. Note the trap: `inventory_import.py` does
    *not* write `--tag`, but `inventory-md add` does — needing a tag is **not** a
-   licence to hand-edit. The **only** change that justifies touching the markdown is
-   **modifying an existing line** (e.g. correcting an EAN), which the append-only
-   `add` cannot do.
+   licence to hand-edit.
+
+   **Correcting a line that is already there** — a late-arriving label photo with
+   the real EAN/best-before, a shop-local barcode needing its chain prefix, an
+   estimate wrongly recorded as a hard date — use `inventory-md edit`, not an
+   editor:
+   ```bash
+   inventory-md edit ITEM_ID [--ean …] [--bb YYYY-MM[:EST]] [--est|--no-est] [--mass …] \
+                             [--volume …] [--qty N] [--price CUR:N/unit] [--category …] \
+                             [--name "…"] [--tag k:v]… [--dry-run]
+   ```
+   It rewrites one unambiguous `ID:` bullet in place (sub-bullets and field order
+   preserved, empty value removes a field, `--est`/`--no-est` flip the `:EST`
+   marker on the date already on the line) with the same QA as `add`. With
+   `add`, `move` and `edit` there is **no remaining reason to hand-edit
+   `inventory.md`**.
 4. **Photos** (manual) — copy only **label** photos to `photos/LOCATION-ID/`; skip
    barcode/expiry close-ups; skip fast-consumed items. Never `git add` photos.
 5. **tingbok** — push price + receipt-name observations for reviewed EANs (a
@@ -363,7 +378,13 @@ This skill and the scripts are quite fresh.  For each run, try to pinpoint probl
   training/regression corpus. When enough accumulate, build a regression suite for
   the extractor and try multi-crop/rotation retries; report multiple checksum-valid
   candidates as needs-review instead of picking one.
-* `inventory-md` has no `edit ID --bb … --mass …` subcommand, so correcting a field
-  on an existing line is still a (sanctioned) hand-edit of inventory.md — the last
-  remaining reason to touch the markdown by hand (bit us 2026-07-09: bacon bb/mass
-  correction from late-surfacing label photos).
+* Fixed 2026-07-22 (2026-07-21 Lidl run friction):
+  * A staging row's `bb_est: true` was silently dropped by `inventory_import.py`, so
+    shelf-life *guesses* were written as printed dates (9 rows on 2026-07-21, 9 on
+    2026-07-10, none with a `:EST` marker). Both spellings (`bb: …:EST` and the
+    separate `bb_est:`) are now honoured, and a contradiction between them is a hard
+    error.
+  * Correcting a field on an existing line needed a hand-edit — the last remaining
+    reason to touch the markdown by hand (bit us 2026-07-09 with a bacon bb/mass
+    correction from late-surfacing label photos, and three times on 2026-07-21).
+    `inventory-md edit ITEM_ID …` now does it, `--est`/`--no-est` included.

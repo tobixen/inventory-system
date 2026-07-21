@@ -935,3 +935,81 @@ class TestMoveCommand:
         rc = cli.main(["move", "wd40", "box2", "--file", str(md), "--dry-run"])
         assert rc == 0
         assert md.read_text(encoding="utf-8") == self._MD
+
+
+class TestEditCommand:
+    """Integration tests for the `edit` subcommand wiring."""
+
+    _MD = (
+        "# ID:box1 First box\n\n"
+        "* category:lubricant ID:wd40 EAN:123 WD-40 spray\n"
+        "* category:milk ID:milk-1 bb:2026-07 Whole milk\n"
+    )
+
+    def _inventory(self, tmp_path) -> Path:
+        md = tmp_path / "inventory.md"
+        md.write_text(self._MD, encoding="utf-8")
+        example_vocab = Path(__file__).parent.parent / "example" / "vocabulary.json"
+        (tmp_path / "vocabulary.json").write_text(example_vocab.read_text(encoding="utf-8"), encoding="utf-8")
+        return md
+
+    def test_edit_updates_field_and_reports_before_after(self, tmp_path, capsys) -> None:
+        md = self._inventory(tmp_path)
+        rc = cli.main(["edit", "wd40", "--ean", "7038010000000", "--file", str(md)])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "EAN:123" in out  # the before line
+        assert "EAN:7038010000000" in out  # the after line
+        assert "EAN:7038010000000" in md.read_text(encoding="utf-8")
+
+    def test_edit_est_flag_alone_marks_existing_bb(self, tmp_path) -> None:
+        md = self._inventory(tmp_path)
+        rc = cli.main(["edit", "milk-1", "--est", "--file", str(md)])
+        assert rc == 0
+        assert "bb:2026-07:EST" in md.read_text(encoding="utf-8")
+
+    def test_edit_no_est_clears_marker(self, tmp_path) -> None:
+        md = self._inventory(tmp_path)
+        cli.main(["edit", "milk-1", "--est", "--file", str(md)])
+        rc = cli.main(["edit", "milk-1", "--no-est", "--file", str(md)])
+        assert rc == 0
+        assert ":EST" not in md.read_text(encoding="utf-8")
+
+    def test_edit_bb_with_est_suffix(self, tmp_path) -> None:
+        md = self._inventory(tmp_path)
+        rc = cli.main(["edit", "milk-1", "--bb", "2026-08:EST", "--file", str(md)])
+        assert rc == 0
+        assert "bb:2026-08:EST" in md.read_text(encoding="utf-8")
+
+    def test_edit_unknown_item_exits_1(self, tmp_path) -> None:
+        md = self._inventory(tmp_path)
+        rc = cli.main(["edit", "nope", "--qty", "2", "--file", str(md)])
+        assert rc == 1
+        assert md.read_text(encoding="utf-8") == self._MD
+
+    def test_edit_dry_run_leaves_file(self, tmp_path, capsys) -> None:
+        md = self._inventory(tmp_path)
+        rc = cli.main(["edit", "wd40", "--qty", "2", "--file", str(md), "--dry-run"])
+        assert rc == 0
+        assert "Would edit" in capsys.readouterr().out
+        assert md.read_text(encoding="utf-8") == self._MD
+
+    def test_edit_repeatable_tag(self, tmp_path) -> None:
+        md = self._inventory(tmp_path)
+        rc = cli.main(["edit", "wd40", "--tag", "condition:new", "--tag", "owner:tb", "--file", str(md)])
+        assert rc == 0
+        text = md.read_text(encoding="utf-8")
+        assert "tag:condition:new" in text
+        assert "tag:owner:tb" in text
+
+    def test_edit_food_losing_bb_exits_1(self, tmp_path) -> None:
+        md = self._inventory(tmp_path)
+        rc = cli.main(["edit", "milk-1", "--bb", "", "--file", str(md)])
+        assert rc == 1
+        assert md.read_text(encoding="utf-8") == self._MD
+
+    def test_edit_without_any_field_exits_1(self, tmp_path) -> None:
+        md = self._inventory(tmp_path)
+        rc = cli.main(["edit", "wd40", "--file", str(md)])
+        assert rc == 1
+        assert md.read_text(encoding="utf-8") == self._MD

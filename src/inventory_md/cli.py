@@ -14,7 +14,7 @@ from pathlib import Path
 
 import argcomplete
 
-from . import additem, moveitem, parser, queries, shopping_list, vocabulary
+from . import additem, edititem, moveitem, parser, queries, shopping_list, vocabulary
 from ._version import __version__
 from .config import Config, load_config
 
@@ -1069,6 +1069,60 @@ Examples:
         "--file", type=Path, dest="file", help="inventory.md to edit (default: configured or ./inventory.md)"
     )
 
+    # Edit command — change fields on an existing item line in inventory.md
+    edit_parser = subparsers.add_parser(
+        "edit",
+        help="Change fields on an existing item line in inventory.md",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Rewrite a single existing ID: bullet in place — the counterpart to the
+append-only `add`, for correcting a line that is already in the file (a mistyped
+EAN, a best-before that turned up on a late label photo, a shop-local barcode
+that needs its chain prefix).  Fields already on the line are substituted where
+they stand; new ones are inserted at their canonical position; an empty value
+removes a field.  Indented sub-bullets and the rest of the file are untouched,
+and the same QA as `add` applies (category resolution, food-without-bb).
+
+--est / --no-est on their own flip the :EST marker on the date already present,
+which is how an estimate recorded as a hard date is repaired.
+
+Examples:
+  inventory-md edit bacon-2026-07-09 --ean 4056489080510 --bb 2026-07-24
+  inventory-md edit yogurt-2026-07-21 --est
+  inventory-md edit pork-belly-2026-07-21 --ean lidl-20709167 --dry-run
+  inventory-md edit drill-bosch --tag condition:used --price EUR:89/pcs
+        """,
+    )
+    edit_parser.add_argument("item_id", help="ID of the item to edit (e.g. milk-2026-07-21)")
+    edit_parser.add_argument("--category", "-c", help="Replace the category (comma-separated for several)")
+    edit_parser.add_argument("--name", help="Replace the human-readable description")
+    edit_parser.add_argument("--ean", help="Product barcode (empty string removes it)")
+    edit_parser.add_argument("--isbn", help="ISBN (empty string removes it)")
+    edit_parser.add_argument("--bb", help="Best-before date: YYYY, YYYY-MM or YYYY-MM-DD (empty string removes it)")
+    est_group = edit_parser.add_mutually_exclusive_group()
+    est_group.add_argument("--est", action="store_true", help="Mark the best-before date as estimated (:EST)")
+    est_group.add_argument(
+        "--no-est", action="store_true", help="Drop the :EST marker — the date is printed on the product"
+    )
+    edit_parser.add_argument("--qty", help="Quantity of identical items (empty string removes it)")
+    edit_parser.add_argument("--mass", help="Net mass, e.g. 500g or 1.2kg (empty string removes it)")
+    edit_parser.add_argument("--volume", help="Volume, e.g. 1l or 400ml (empty string removes it)")
+    edit_parser.add_argument("--price", help="Price at purchase, e.g. EUR:2.49/pcs (empty string removes it)")
+    edit_parser.add_argument("--value", help="Subjective value estimate, e.g. NOK:200 (empty string removes it)")
+    edit_parser.add_argument(
+        "--tag", action="append", dest="tags", help="Tag (repeatable); replaces the item's existing tags"
+    )
+    edit_parser.add_argument("--no-bb-check", action="store_true", help="Skip the food-without-best-before check")
+    edit_parser.add_argument(
+        "--strict", action="store_true", help="Treat unresolved categories as errors, not warnings"
+    )
+    edit_parser.add_argument(
+        "--dry-run", action="store_true", help="Validate and report the new line without writing the file"
+    )
+    edit_parser.add_argument(
+        "--file", type=Path, dest="file", help="inventory.md to edit (default: configured or ./inventory.md)"
+    )
+
     # Move command
     move_parser = subparsers.add_parser(
         "move",
@@ -1362,6 +1416,8 @@ Examples:
         )
     elif args.command == "add":
         return add_item_command(args, config)
+    elif args.command == "edit":
+        return edit_item_command(args, config)
     elif args.command == "move":
         return move_item_command(args, config)
     else:
@@ -1369,15 +1425,18 @@ Examples:
         return 1
 
 
+def _resolve_md_path(args, config: Config) -> Path:
+    """The markdown source for a write command: --file, else config, else ./inventory.md."""
+    if args.file is not None:
+        return args.file
+    if config.inventory_file:
+        return Path(config.inventory_file)
+    return Path("inventory.md")
+
+
 def add_item_command(args, config: Config) -> int:
     """Handle the `add` subcommand: append an item line to inventory.md."""
-    # Resolve the markdown source: --file, else configured inventory_file, else ./inventory.md
-    if args.file is not None:
-        md_path = args.file
-    elif config.inventory_file:
-        md_path = Path(config.inventory_file)
-    else:
-        md_path = Path("inventory.md")
+    md_path = _resolve_md_path(args, config)
 
     if not md_path.exists():
         print(f"❌ Error: {md_path} not found.")
@@ -1393,7 +1452,9 @@ def add_item_command(args, config: Config) -> int:
         ean=args.ean,
         isbn=args.isbn,
         bb=args.bb,
-        bb_est=args.est,
+        # --est absent means "unspecified", so a --bb that carries its own :EST
+        # suffix is honoured instead of colliding with an implicit False.
+        bb_est=args.est or None,
         qty=args.qty,
         mass=args.mass,
         volume=args.volume,
@@ -1421,14 +1482,62 @@ def add_item_command(args, config: Config) -> int:
     return 0
 
 
+def edit_item_command(args, config: Config) -> int:
+    """Handle the `edit` subcommand: change fields on an existing item line."""
+    md_path = _resolve_md_path(args, config)
+
+    if not md_path.exists():
+        print(f"❌ Error: {md_path} not found.")
+        return 1
+
+    # --est/--no-est absent means "leave the marker as it is"; a --bb carrying its
+    # own :EST suffix then decides on its own.
+    bb_est = True if args.est else (False if args.no_est else None)
+
+    result = edititem.edit_item(
+        md_path,
+        item_id=args.item_id,
+        category=args.category,
+        ean=args.ean,
+        isbn=args.isbn,
+        bb=args.bb,
+        bb_est=bb_est,
+        qty=args.qty,
+        mass=args.mass,
+        volume=args.volume,
+        price=args.price,
+        value=args.value,
+        tags=args.tags,
+        name=args.name,
+        check_bb=not args.no_bb_check,
+        strict=args.strict,
+        lang=config.lang or "en",
+        dry_run=args.dry_run,
+        tingbok_url=config.tingbok_url,
+    )
+
+    for warning in result.warnings:
+        print(f"⚠️  {warning}")
+
+    if result.errors:
+        for error in result.errors:
+            print(f"❌ {error}")
+        return 1
+
+    verb = "Would edit" if args.dry_run else "Edited"
+    where = f" in {result.container}" if result.container else ""
+    print(f"{'🔎' if args.dry_run else '✅'} {verb} {args.item_id}{where}:")
+    print(f"   - {result.before}")
+    print(f"   + {result.after}")
+    if not args.dry_run:
+        print(f"   in {md_path}")
+        print("Run 'inventory-md parse' to refresh inventory.json.")
+    return 0
+
+
 def move_item_command(args, config: Config) -> int:
     """Handle the `move` subcommand: relocate an item line to another container."""
-    if args.file is not None:
-        md_path = args.file
-    elif config.inventory_file:
-        md_path = Path(config.inventory_file)
-    else:
-        md_path = Path("inventory.md")
+    md_path = _resolve_md_path(args, config)
 
     if not md_path.exists():
         print(f"❌ Error: {md_path} not found.")

@@ -65,6 +65,39 @@ def _coerce_bb(bb: str | date | None) -> str | None:
     return bb
 
 
+def resolve_bb_est(bb: str | date | None, bb_est: bool | None = None) -> tuple[str | None, bool]:
+    """Reconcile the two spellings of "this best-before is an estimate".
+
+    An estimate can be expressed inline as a ``:EST`` suffix on the date
+    (``bb: 2026-09:EST``) or out of band as a separate boolean
+    (``bb: 2026-09`` plus ``bb_est: true``).  Both must produce the same
+    ``bb:DATE:EST`` line — recording a guess as a hard fact is the one outcome
+    that must never happen silently.
+
+    ``bb_est=None`` means *unspecified*: the suffix alone decides.  An explicit
+    flag that contradicts the suffix (``2026-09:EST`` with ``bb_est=False``) is a
+    :class:`ValueError`, never a silent pick.
+
+    Returns ``(bb_without_suffix, is_estimated)``.
+    """
+    if bb_est is not None and not isinstance(bb_est, bool):
+        raise ValueError(f"bb_est must be true or false, got {bb_est!r}")
+
+    bb = _coerce_bb(bb)
+    suffix_est = False
+    if isinstance(bb, str) and bb.endswith(":EST"):
+        bb = bb[: -len(":EST")]
+        suffix_est = True
+
+    if suffix_est and bb_est is False:
+        raise ValueError(
+            f"best-before {bb!r} carries a :EST suffix but bb_est is false — "
+            "an estimate cannot also be an assertion; drop one of the two"
+        )
+
+    return bb, bool(bb_est) if bb_est is not None else suffix_est
+
+
 def _drop_tingbok_resolvable(labels: list[str], lang: str, tingbok_url: str) -> list[str]:
     """Filter out category labels that resolve in tingbok's vocabulary.
 
@@ -79,6 +112,28 @@ def _drop_tingbok_resolvable(labels: list[str], lang: str, tingbok_url: str) -> 
         return labels
     known = {cid: c for cid, c in remote.items() if c.source == "tingbok"}
     return [label for label in labels if _vocabulary.resolve_category(label, known, lang) is None]
+
+
+def category_qa(
+    md_path: Path,
+    category: str,
+    *,
+    lang: str = "en",
+    tingbok_url: str | None = None,
+) -> tuple[list[str], bool]:
+    """Category checks shared by the ``add`` and ``edit`` write paths.
+
+    Returns ``(unresolved_labels, is_food)`` for a comma-separated ``category``
+    string: the labels that resolve neither in the inventory's local vocabulary
+    nor (when ``tingbok_url`` is given) in tingbok's, and whether the category
+    denotes food — which is what makes a missing ``bb:`` an error.
+    """
+    concepts = _queries._load_food_vocabulary(md_path)
+    labels = [c for c in category.split(",") if c]
+    unresolved = [c for c in labels if _vocabulary.resolve_category(c, concepts, lang) is None]
+    if unresolved and tingbok_url:
+        unresolved = _drop_tingbok_resolvable(unresolved, lang, tingbok_url)
+    return unresolved, _queries._is_food(labels, concepts, lang)
 
 
 def slugify(text: str) -> str:
@@ -224,7 +279,7 @@ def add_item(
     ean: str | None = None,
     isbn: str | None = None,
     bb: str | date | None = None,
-    bb_est: bool = False,
+    bb_est: bool | None = None,
     qty: Any | None = None,
     mass: str | None = None,
     volume: str | None = None,
@@ -266,23 +321,23 @@ def add_item(
 
     # Category resolution against the local vocabulary, with a tingbok fallback:
     # categories new to this inventory are fine if tingbok knows them.
-    concepts = _queries._load_food_vocabulary(md_path)
     resolved_lang = lang or "en"
-    unresolved = [
-        c for c in category.split(",") if c and _vocabulary.resolve_category(c, concepts, resolved_lang) is None
-    ]
-    if unresolved and tingbok_url:
-        unresolved = _drop_tingbok_resolvable(unresolved, resolved_lang, tingbok_url)
+    unresolved, is_food = category_qa(md_path, category, lang=resolved_lang, tingbok_url=tingbok_url)
     if unresolved:
         msg = f"category does not resolve in local vocabulary: {', '.join(unresolved)}"
         (result.errors if strict else result.warnings).append(msg)
 
-    # Best-before format and food check.
-    bb = _coerce_bb(bb)
+    # Best-before format and food check.  ``:EST`` may arrive as a suffix on the
+    # date or as the separate ``bb_est`` flag; the two must not disagree.
+    try:
+        bb, est = resolve_bb_est(bb, bb_est)
+    except ValueError as exc:
+        result.errors.append(str(exc))
+        return result
+    bb_est = est
     if bb is not None and not validate_bb_format(bb):
         result.errors.append(f"invalid best-before format: {bb!r} (use YYYY, YYYY-MM or YYYY-MM-DD)")
 
-    is_food = _queries._is_food(category.split(","), concepts, resolved_lang)
     if is_food and not bb and check_bb:
         result.errors.append(
             f"food item '{category}' has no best-before (bb:); supply bb:YYYY-MM "
