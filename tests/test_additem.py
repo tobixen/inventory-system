@@ -383,3 +383,88 @@ def test_add_item_no_tingbok_url_stays_offline(inventory_dir: Path, monkeypatch:
         name="Novel thing",
     )
     assert any("does not resolve" in w for w in result.warnings)
+
+
+# --- container resolution (regression: groceries written into a tool box) ----
+
+_MD_TEMP = """# Intro
+
+Demo
+
+# Storage
+
+## ID:temp-boxes Temporary boxes
+
+* Assorted junk
+
+#### ID:TC-01 Box TC-01 - Einhell Power X-Change batteries & charger
+
+* category:battery ID:einhell-1 Einhell 4Ah battery
+
+## ID:temp - newly bought, not yet sorted to a proper place
+
+* category:milk ID:milk-1 bb:2026-08 Milk
+"""
+
+
+@pytest.fixture
+def temp_inventory(tmp_path: Path) -> Path:
+    (tmp_path / "inventory.md").write_text(_MD_TEMP, encoding="utf-8")
+    example_vocab = Path(__file__).parent.parent / "example" / "vocabulary.json"
+    (tmp_path / "vocabulary.json").write_text(example_vocab.read_text(encoding="utf-8"), encoding="utf-8")
+    return tmp_path
+
+
+def test_add_item_exact_container_beats_prefix_sibling(temp_inventory: Path):
+    """`location: temp` must land in ID:temp, not in ID:temp-boxes' last bullet.
+
+    Regression: the substring match hit `## ID:temp-boxes` first; its section
+    spans the nested `#### ID:TC-01`, so the bullet was appended inside the
+    Einhell tool box. Cornflakes in a battery box.
+    """
+    md_path = temp_inventory / "inventory.md"
+    result = additem.add_item(
+        md_path,
+        container_id="temp",
+        category="cereal",
+        item_id="cornflakes-1",
+        bb="2027-01",
+        name="Cornflakes 500g",
+        check_bb=False,
+    )
+    assert not result.errors
+    text = md_path.read_text(encoding="utf-8")
+    temp_block = text.split("## ID:temp - newly bought")[1]
+    assert "ID:cornflakes-1" in temp_block
+    # and emphatically NOT in the tool box
+    tc01_block = text.split("#### ID:TC-01")[1].split("## ID:temp - newly bought")[0]
+    assert "cornflakes" not in tc01_block
+
+
+def test_add_item_container_match_is_case_insensitive(temp_inventory: Path):
+    md_path = temp_inventory / "inventory.md"
+    result = additem.add_item(
+        md_path,
+        container_id="tc-01",
+        category="battery",
+        item_id="einhell-2",
+        name="Einhell 2Ah battery",
+        check_bb=False,
+    )
+    assert not result.errors
+    text = md_path.read_text(encoding="utf-8")
+    tc01_block = text.split("#### ID:TC-01")[1].split("## ID:temp - newly bought")[0]
+    assert "ID:einhell-2" in tc01_block
+
+
+def test_add_item_unknown_container_still_errors(temp_inventory: Path):
+    md_path = temp_inventory / "inventory.md"
+    result = additem.add_item(
+        md_path,
+        container_id="no-such-box",
+        category="milk",
+        item_id="milk-9",
+        bb="2026-08",
+        name="Milk",
+    )
+    assert any("not found" in e for e in result.errors)

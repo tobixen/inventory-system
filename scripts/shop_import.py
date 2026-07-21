@@ -14,9 +14,19 @@ from photos — those are judgement calls left to a later AI review step that ed
 the emitted staging YAML. The staging file is the correction checkpoint before
 any irreversible action (tingbok PUT, inventory edit, commit).
 
+The receipts file holds many trips; by default the **newest by purchase date**
+is imported. It is not the last array element: ``lidl_receipts.json`` is sorted
+by receipt id, and the id is not chronological. Use ``--receipt-id`` or
+``--date`` to pick a specific trip; an ambiguous selector (two visits on one
+day) fails and lists the candidates rather than guessing.
+
 Usage:
     shop_import.py --receipt ~/regnskap/lidl_receipts.json \\
         --barcodes-json barcodes.json --out staging/shopping-2026-05-28.yaml
+
+    # a specific trip rather than the newest:
+    shop_import.py --receipt ~/regnskap/lidl_receipts.json --date 2026-07-17 ...
+    shop_import.py --receipt ~/regnskap/lidl_receipts.json --receipt-id 0300019290... ...
 
     # produce barcodes.json first with:
     #   extract_barcodes.py --json PHOTOS... > barcodes.json
@@ -64,6 +74,67 @@ def parse_price(value: str | float) -> float:
 def _iso_date(value: str) -> str:
     """Normalise a Lidl ``YYYY.MM.DD`` purchase date to ``YYYY-MM-DD``."""
     return value.strip().replace(".", "-")
+
+
+def receipt_date(receipt: dict[str, Any]) -> str:
+    """ISO purchase date of a receipt (``''`` when it carries none).
+
+    Accepts the Lidl ``purchase_date`` (``2026.07.21``) and the generic ``date``
+    key used by hand-transcribed receipts.
+    """
+    return _iso_date(str(receipt.get("purchase_date") or receipt.get("date") or ""))
+
+
+def _describe(receipt: dict[str, Any]) -> str:
+    """One-line receipt summary for disambiguation messages."""
+    return f"{receipt.get('id', '?')} ({receipt_date(receipt) or 'no date'}, {len(receipt.get('items', []))} items)"
+
+
+def select_receipt(
+    receipts: list[dict[str, Any]] | dict[str, Any],
+    *,
+    receipt_id: str | None = None,
+    date: str | None = None,
+) -> dict[str, Any]:
+    """Pick one receipt out of a receipts file.
+
+    Selection is by ``receipt_id`` and/or ``date``; with neither, the **newest
+    by purchase date** wins.  Never by array position: ``lidl_receipts.json`` is
+    sorted by receipt *id*, and the id is not chronological — the 2026-07-21
+    trip sorts *before* the 2026-07-17 one, so "the last entry" silently handed
+    back the older trip.
+
+    A selector matching several receipts (two visits in one day is normal)
+    raises :class:`ValueError` listing them, rather than guessing — same policy
+    as ``shopping_context.match_shop_osm``.
+    """
+    if isinstance(receipts, dict):
+        return receipts
+    if not receipts:
+        raise ValueError("receipt file contains no receipts")
+
+    candidates = receipts
+    if receipt_id is not None:
+        candidates = [r for r in candidates if str(r.get("id")) == receipt_id]
+    if date is not None:
+        want = _iso_date(date)
+        candidates = [r for r in candidates if receipt_date(r) == want]
+
+    if not candidates:
+        wanted = ", ".join(filter(None, [f"id={receipt_id}" if receipt_id else "", f"date={date}" if date else ""]))
+        known = ", ".join(sorted({receipt_date(r) for r in receipts if receipt_date(r)})[-8:])
+        raise ValueError(f"no receipt matches {wanted}. Most recent dates in the file: {known}")
+
+    if receipt_id is None and date is None:
+        newest = max(receipt_date(r) for r in candidates)
+        candidates = [r for r in candidates if receipt_date(r) == newest]
+
+    if len(candidates) > 1:
+        listing = "; ".join(_describe(r) for r in candidates)
+        raise ValueError(
+            f"{len(candidates)} receipts match — refusing to guess: {listing}. Pass --receipt-id to pick one."
+        )
+    return candidates[0]
 
 
 def _new_item_row(receipt_name: str, price: float, qty: float, unit: str) -> dict[str, Any]:
@@ -123,7 +194,7 @@ def parse_lidl_receipt(
         items.append(row)
 
     return {
-        "session": _iso_date(receipt.get("purchase_date") or receipt.get("date") or ""),
+        "session": receipt_date(receipt),
         "shop": receipt.get("shop") or shop,
         "store": receipt.get("store"),
         "currency": receipt.get("currency", "EUR"),
@@ -274,8 +345,10 @@ def main() -> None:  # pragma: no cover - thin CLI wiring
         "--receipt",
         type=Path,
         default=Path.home() / "regnskap" / "lidl_receipts.json",
-        help="Path to lidl_receipts.json (latest entry is used)",
+        help="Path to lidl_receipts.json (newest receipt by purchase date is used)",
     )
+    parser.add_argument("--receipt-id", default=None, help="Import the receipt with this id instead of the newest")
+    parser.add_argument("--date", default=None, help="Import the receipt purchased on this date (YYYY-MM-DD)")
     parser.add_argument("--barcodes-json", type=Path, default=None, help="JSON output from extract_barcodes.py --json")
     parser.add_argument("--shop", default="Lidl Varna", help="Shop name recorded in the staging file")
     parser.add_argument("--tingbok-url", default=DEFAULT_TINGBOK_URL)
@@ -284,7 +357,11 @@ def main() -> None:  # pragma: no cover - thin CLI wiring
     args = parser.parse_args()
 
     receipts = json.loads(args.receipt.read_text(encoding="utf-8"))
-    receipt = receipts[-1] if isinstance(receipts, list) else receipts
+    try:
+        receipt = select_receipt(receipts, receipt_id=args.receipt_id, date=args.date)
+    except ValueError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
 
     barcode_results: list[dict[str, Any]] = []
     if args.barcodes_json:

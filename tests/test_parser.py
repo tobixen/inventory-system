@@ -582,3 +582,62 @@ class TestAddContainerIdPrefixes:
         content = md.read_text()
         assert "## ID:B1" not in content
         assert "## ID:C1" in content
+
+
+class TestFindContainerSectionExactMatch:
+    """An exact ID match must always beat a prefix/substring match.
+
+    Regression: `location: temp` in a staging file resolved to the *earlier*
+    heading `## ID:temp-boxes`, whose section spans a whole tree of tool boxes,
+    so the new bullet was appended after the last bullet in that span — inside
+    `#### ID:TC-01` (Einhell batteries). Groceries ended up in a tool box.
+    """
+
+    LINES = [
+        "## ID:temp-boxes Temporary boxes\n",
+        "* Junk\n",
+        "#### ID:TC-01 Box TC-01 - Einhell Power X-Change batteries & charger\n",
+        "* category:battery ID:einhell-1 Battery\n",
+        "## ID:temp - newly bought, not yet sorted to a proper place\n",
+        "* category:milk ID:milk-1 bb:2026-08 Milk\n",
+    ]
+
+    def test_exact_id_wins_over_earlier_prefix_match(self):
+        result = parser.find_container_section(self.LINES, "temp")
+        assert result is not None
+        start, end, level = result
+        assert start == 4  # the `## ID:temp` heading, NOT `## ID:temp-boxes`
+        assert level == "##"
+        assert end == len(self.LINES)
+
+    def test_prefixed_id_still_resolves_to_itself(self):
+        result = parser.find_container_section(self.LINES, "temp-boxes")
+        assert result is not None
+        assert result[0] == 0
+
+    def test_exact_match_is_case_insensitive(self):
+        result = parser.find_container_section(self.LINES, "tc-01")
+        assert result is not None
+        assert result[0] == 2
+
+    def test_unique_prefix_match_still_works(self):
+        """No exact `temp-b` container, but only one candidate — resolve it."""
+        result = parser.find_container_section(self.LINES, "temp-b")
+        assert result is not None
+        assert result[0] == 0
+
+    def test_ambiguous_prefix_match_raises_and_lists_candidates(self):
+        lines = [
+            "## ID:food1 Pantry\n",
+            "* Pasta\n",
+            "## ID:food2 Fridge\n",
+            "* Milk\n",
+        ]
+        with pytest.raises(parser.AmbiguousContainerError) as exc:
+            parser.find_container_section(lines, "food")
+        message = str(exc.value)
+        assert "food1" in message
+        assert "food2" in message
+
+    def test_no_match_still_returns_none(self):
+        assert parser.find_container_section(self.LINES, "nope") is None

@@ -16,6 +16,15 @@ from pathlib import Path
 from typing import Any
 
 
+class AmbiguousContainerError(ValueError):
+    """A container ID matched several containers and none of them exactly.
+
+    Raised instead of guessing: writing an item into the wrong container is
+    silent data corruption that nobody notices until they go looking for the
+    item on a shelf.
+    """
+
+
 def create_thumbnail(source_path: Path, dest_path: Path, max_size: int = 800) -> bool:
     """
     Create a resized thumbnail from a source image.
@@ -579,6 +588,28 @@ def _heading_level(line: str) -> int:
     return n if 0 < n < len(line) and line[n] == " " else 0
 
 
+def heading_container_id(line: str) -> str | None:
+    """Return the ``ID:`` token of a container heading, or None.
+
+    Only headings carry container IDs, so a non-heading line always yields
+    None.  The value grammar matches :func:`extract_metadata` (everything up to
+    whitespace or a closing paren), and as there the *first* ``ID:`` wins.
+    """
+    if not _heading_level(line):
+        return None
+    match = re.search(r"\bID:([^)\s]+)", line, re.IGNORECASE)
+    return match.group(1) if match else None
+
+
+def _section_end(lines: list[str], start: int, depth: int) -> int:
+    """Exclusive index of the first line after the section opened at ``start``."""
+    for j in range(start + 1, len(lines)):
+        j_depth = _heading_level(lines[j])
+        if j_depth and j_depth <= depth:
+            return j
+    return len(lines)
+
+
 def find_container_section(lines: list[str], container_id: str) -> tuple[int, int, str] | None:
     """Locate a container heading in a list of lines by its ID token.
 
@@ -587,18 +618,45 @@ def find_container_section(lines: list[str], container_id: str) -> tuple[int, in
     the same or a higher level, or len(lines)), and level is the heading prefix
     ("#", "##", "###", …).  Handles nested sub-containers at any depth.  Returns
     None if no heading with ID:<container_id> is found.
+
+    Resolution is deliberately two-pass, mirroring
+    ``scripts/shopping_context.py::match_shop_osm``:
+
+    1. An **exact** (case-insensitive) ID match always wins.
+    2. Only if there is none do we fall back to a prefix match, and only when it
+       is *unambiguous*; several candidates raise
+       :class:`AmbiguousContainerError` rather than silently picking the first.
+
+    Both rules exist because this used to be a bare ``f"ID:{container_id}" in
+    line`` substring test, which resolved by *file order*: ``ID:temp`` matched
+    the earlier ``## ID:temp-boxes`` heading, whose section spans a whole tree
+    of tool boxes, so :func:`~inventory_md.additem.insertion_index` appended the
+    new bullet after that span's last item — inside ``#### ID:TC-01``.
+    Groceries silently landed in a tool box.
     """
+    candidates: list[tuple[int, int]] = []  # (line index, heading depth)
+    want = container_id.casefold()
+
     for i, line in enumerate(lines):
+        found = heading_container_id(line)
+        if found is None:
+            continue
         depth = _heading_level(line)
-        if depth and f"ID:{container_id}" in line:
-            end = len(lines)
-            for j in range(i + 1, len(lines)):
-                j_depth = _heading_level(lines[j])
-                if j_depth and j_depth <= depth:
-                    end = j
-                    break
-            return (i, end, "#" * depth)
-    return None
+        if found.casefold() == want:
+            return (i, _section_end(lines, i, depth), "#" * depth)
+        if found.casefold().startswith(want):
+            candidates.append((i, depth))
+
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        names = ", ".join(str(heading_container_id(lines[i])) for i, _ in candidates)
+        raise AmbiguousContainerError(
+            f"container ID '{container_id}' is ambiguous — matches {names}. "
+            "Pass the exact ID (no container has it as its full ID)."
+        )
+    i, depth = candidates[0]
+    return (i, _section_end(lines, i, depth), "#" * depth)
 
 
 def validate_inventory(data: dict[str, Any]) -> list[str]:

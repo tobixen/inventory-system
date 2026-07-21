@@ -254,10 +254,15 @@ def add_item(
     data = _parser.parse_inventory(md_path)
     existing_ids = collect_existing_ids(data)
 
-    # Container must exist.
-    if not any(c.get("id") == container_id for c in data.get("containers", [])):
+    # Container must exist.  Matching is case-insensitive, but the *stored*
+    # spelling is what gets handed to the writer, so the section lookup later on
+    # is an exact hit rather than a fuzzy one.
+    want = container_id.casefold()
+    matches = [c["id"] for c in data.get("containers", []) if c.get("id") and c["id"].casefold() == want]
+    if not matches:
         result.errors.append(f"Container ID:{container_id} not found in {md_path.name}")
         return result
+    container_id = matches[0]
 
     # Category resolution against the local vocabulary, with a tingbok fallback:
     # categories new to this inventory are fine if tingbok knows them.

@@ -19,6 +19,8 @@ from shop_import import (  # noqa: E402
     find_date_candidates,
     parse_lidl_receipt,
     parse_price,
+    receipt_date,
+    select_receipt,
 )
 
 LIDL_RECEIPT = {
@@ -314,3 +316,82 @@ class TestTingbokSearcherLive:
         search = _tingbok_searcher()
         results = search("ZZZ НЕСЪЩЕСТВУВАЩ ПРОДУКТ 999Г")
         assert all(r["score"] < 1.0 for r in results)
+
+
+# --- receipt selection ------------------------------------------------------
+
+# Real-world shape: lidl_receipts.json is sorted by receipt *id*, and the id is
+# not chronological. The 2026-07-21 trip (19 items) sorts BEFORE the 2026-07-17
+# one (6 items) because its id prefix is lower, so "the last array element" is
+# the wrong trip. Two receipts share 2026.07.10 (two visits in one day).
+RECEIPTS = [
+    {"id": "03000144812026071071567", "purchase_date": "2026.07.10", "items": [{"name": "A", "price": "1,00"}]},
+    {"id": "03000144822026071065457", "purchase_date": "2026.07.10", "items": [{"name": "B", "price": "2,00"}]},
+    {"id": "030001928220260721182207", "purchase_date": "2026.07.21", "items": [{"name": "C", "price": "3,00"}]},
+    {"id": "030001929020260717123108", "purchase_date": "2026.07.17", "items": [{"name": "D", "price": "4,00"}]},
+]
+
+
+class TestReceiptDate:
+    def test_lidl_dotted_date_normalised(self):
+        assert receipt_date({"purchase_date": "2026.07.21"}) == "2026-07-21"
+
+    def test_generic_date_key_accepted(self):
+        assert receipt_date({"date": "2026-07-21"}) == "2026-07-21"
+
+    def test_missing_date_is_empty(self):
+        assert receipt_date({"id": "x"}) == ""
+
+
+class TestSelectReceipt:
+    def test_default_is_newest_by_date_not_array_position(self):
+        """The bug: receipts[-1] is the 07-17 trip; the newest is 07-21."""
+        chosen = select_receipt(RECEIPTS)
+        assert chosen["id"] == "030001928220260721182207"
+        assert receipt_date(chosen) == "2026-07-21"
+
+    def test_select_by_receipt_id(self):
+        chosen = select_receipt(RECEIPTS, receipt_id="030001929020260717123108")
+        assert receipt_date(chosen) == "2026-07-17"
+
+    def test_select_by_date(self):
+        chosen = select_receipt(RECEIPTS, date="2026-07-17")
+        assert chosen["id"] == "030001929020260717123108"
+
+    def test_select_by_dotted_date_also_works(self):
+        chosen = select_receipt(RECEIPTS, date="2026.07.17")
+        assert chosen["id"] == "030001929020260717123108"
+
+    def test_ambiguous_date_fails_loudly_listing_candidates(self):
+        """Two visits on 2026-07-10 — refuse to guess, like match_shop_osm does."""
+        with pytest.raises(ValueError) as exc:
+            select_receipt(RECEIPTS, date="2026-07-10")
+        message = str(exc.value)
+        assert "03000144812026071071567" in message
+        assert "03000144822026071065457" in message
+
+    def test_ambiguous_newest_fails_loudly(self):
+        """If the newest date itself has two receipts, the default must not guess."""
+        same_day = RECEIPTS[:2]
+        with pytest.raises(ValueError) as exc:
+            select_receipt(same_day)
+        assert "03000144812026071071567" in str(exc.value)
+
+    def test_unknown_receipt_id_raises(self):
+        with pytest.raises(ValueError, match="no receipt"):
+            select_receipt(RECEIPTS, receipt_id="nope")
+
+    def test_unknown_date_raises(self):
+        with pytest.raises(ValueError, match="no receipt"):
+            select_receipt(RECEIPTS, date="1999-01-01")
+
+    def test_receipt_id_and_date_combine(self):
+        chosen = select_receipt(RECEIPTS, receipt_id="03000144812026071071567", date="2026-07-10")
+        assert chosen["id"] == "03000144812026071071567"
+
+    def test_single_dict_passed_through(self):
+        assert select_receipt(LIDL_RECEIPT) is LIDL_RECEIPT
+
+    def test_empty_list_raises(self):
+        with pytest.raises(ValueError):
+            select_receipt([])

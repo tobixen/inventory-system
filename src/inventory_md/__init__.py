@@ -10,6 +10,7 @@ Features:
 
 from ._version import __version__
 from .parser import (
+    AmbiguousContainerError,
     add_container_id_prefixes,
     extract_metadata,
     find_container_section,
@@ -24,6 +25,7 @@ __all__ = [
     "extract_metadata",
     "validate_inventory",
     "find_container_section",
+    "AmbiguousContainerError",
     "add_container_id_prefixes",
     "save_json",
     "load_json",
