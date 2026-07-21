@@ -13,6 +13,7 @@ Usage::
 
     shopping_context.py "Praktiker"                       # everything for a shop
     shopping_context.py "Praktiker" --diary ~/solveig/diary-2026.md
+    shopping_context.py "Praktiker" --diary ~/solveig    # directory also works
     shopping_context.py                                   # just list recent staging
 
 It writes nothing and touches no network. Pair it with ``pipeline.py`` (which
@@ -95,6 +96,21 @@ def find_staging_files(staging_dir: Path, shop: str | None, limit: int) -> list[
     return files[:limit]
 
 
+def read_diary_text(diary_path: Path) -> str:
+    """Read diary text from a file *or* a directory of diary-md files.
+
+    diary-md keeps one ``diary-YYYY.md`` (or ``diary-YYYYMM.md``) file per period
+    and its own CLI takes ``--directory``, so callers naturally have a directory
+    at hand.  Accept either: a directory reads the newest diary file in it.
+    """
+    if diary_path.is_dir():
+        files = sorted(diary_path.glob("diary*.md"))
+        if not files:
+            raise OSError(f"no diary*.md files in {diary_path}")
+        return files[-1].read_text(encoding="utf-8")
+    return diary_path.read_text(encoding="utf-8")
+
+
 def grep_diary_lines(diary_text: str, shop: str) -> list[str]:
     """Return diary lines mentioning *shop* (case-insensitive), stripped."""
     want = shop.casefold()
@@ -146,7 +162,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("shop", nargs="?", help="Shop name (or substring) to focus on")
     ap.add_argument("--staging-dir", type=Path, default=Path("staging"))
     ap.add_argument("--osm-cache", type=Path, default=DEFAULT_OSM_CACHE)
-    ap.add_argument("--diary", type=Path, help="Diary file to grep for prior expense lines")
+    ap.add_argument(
+        "--diary", type=Path, help="Diary file, or a directory of diary-md files, to grep for prior expense lines"
+    )
     ap.add_argument("--ledger", type=Path, help="Ledger JSONL to show recent rows for this shop")
     ap.add_argument("--limit", type=int, default=2, help="How many recent staging files to show")
     ap.add_argument("--no-content", action="store_true", help="List staging files without dumping their content")
@@ -206,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.diary and args.shop:
         print(f"## Recent diary lines mentioning '{args.shop}'")
         try:
-            lines = grep_diary_lines(args.diary.read_text(encoding="utf-8"), args.shop)
+            lines = grep_diary_lines(read_diary_text(args.diary), args.shop)
             for line in lines[-8:]:
                 print(f"  {line}")
             if not lines:

@@ -8,6 +8,7 @@ from shopping_context import (  # noqa: E402
     find_staging_files,
     grep_diary_lines,
     match_shop_osm,
+    read_diary_text,
     recent_ledger_rows,
     shop_of,
     shop_osm_candidates,
@@ -128,3 +129,27 @@ class TestRecentLedgerRows:
 
     def test_no_match_is_empty(self):
         assert recent_ledger_rows(self.LEDGER, "Decathlon", limit=10) == []
+
+
+class TestReadDiaryText:
+    """--diary may be a file or a directory (diary-md keeps diary-YYYY.md files)."""
+
+    def test_plain_file(self, tmp_path):
+        f = tmp_path / "diary-2026.md"
+        f.write_text("* EUR 1.00 - groceries - Lidl Varna\n", encoding="utf-8")
+        assert "Lidl Varna" in read_diary_text(f)
+
+    def test_directory_discovers_diary_file(self, tmp_path):
+        (tmp_path / "diary-2026.md").write_text("* EUR 2.00 - groceries - Lidl Varna\n", encoding="utf-8")
+        assert "Lidl Varna" in read_diary_text(tmp_path)
+
+    def test_directory_prefers_newest_year(self, tmp_path):
+        (tmp_path / "diary-2025.md").write_text("old\n", encoding="utf-8")
+        (tmp_path / "diary-2026.md").write_text("new\n", encoding="utf-8")
+        assert "new" in read_diary_text(tmp_path)
+
+    def test_directory_without_diary_files_raises(self, tmp_path):
+        import pytest
+
+        with pytest.raises(OSError):
+            read_diary_text(tmp_path)
