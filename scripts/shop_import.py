@@ -61,7 +61,21 @@ DEFAULT_TINGBOK_URL = "https://tingbok.plann.no"
 #: Receipt name suffix Lidl prints for weighed (per-kilogram) goods.
 _KG_SUFFIX = "НА КГ"
 
+#: Map a parser discount ``type`` to an Open Prices ``discount_type`` enum value
+#: (QUANTITY/SALE/SEASONAL/LOYALTY_PROGRAM/EXPIRES_SOON/PICK_IT_YOURSELF/…).
+#: A Lidl Plus coupon is a loyalty-programme discount; an in-store markdown
+#: sticker is a short-shelf-life reduction. Anything unknown falls back to SALE.
+_OPENPRICES_DISCOUNT_TYPE = {
+    "lidlplus_coupon": "LOYALTY_PROGRAM",
+    "markdown": "EXPIRES_SOON",
+}
+
 Searcher = Callable[..., list[dict[str, Any]]]
+
+
+def openprices_discount_type(discount_type: str | None) -> str:
+    """Open Prices ``discount_type`` for a parser discount ``type`` (default SALE)."""
+    return _OPENPRICES_DISCOUNT_TYPE.get(discount_type or "", "SALE")
 
 
 def parse_price(value: str | float) -> float:
@@ -167,16 +181,70 @@ def _new_item_row(receipt_name: str, price: float, qty: float, unit: str) -> dic
     }
 
 
+def _staging_discounts(raw_discounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalise a receipt line's discount list for the staging file.
+
+    Keeps the human-meaningful fields (amount, kind, label) and adds the mapped
+    Open Prices ``discount_type``; drops the internal ``promotion_id``. A line can
+    carry several discounts of different kinds (a Lidl Plus coupon *and* a
+    short-expiry markdown on the same line), so this is always a list.
+    """
+    out: list[dict[str, Any]] = []
+    for d in raw_discounts:
+        entry: dict[str, Any] = {
+            "amount": parse_price(d["amount"]),
+            "type": d.get("type"),
+            "openprices_type": openprices_discount_type(d.get("type")),
+            "label": d.get("label"),
+        }
+        if d.get("percent") is not None:
+            entry["percent"] = d["percent"]
+        out.append(entry)
+    return out
+
+
+def _apply_line_money(row: dict[str, Any], raw: dict[str, Any], price: float, qty: float, gross_total: float) -> None:
+    """Fill a staging row's money fields, honouring any per-line discount.
+
+    ``gross_total`` is the pre-discount line amount (the receipt's printed
+    ``line_total`` for Lidl, or ``price * qty`` otherwise). When the receipt
+    records a ``net_total`` below it, the row is booked at the **net** amount and
+    the gross/discount are surfaced alongside; ``price_net`` is the net per-unit
+    price the Open Prices publisher should post. Undiscounted lines get *no*
+    discount fields at all, so hand-transcribed receipts stay clean.
+    """
+    net_total = parse_price(raw["net_total"]) if raw.get("net_total") is not None else gross_total
+    discounts = _staging_discounts(raw.get("discounts") or [])
+    row["line_total"] = net_total  # net = what was actually charged; authoritative
+    if not discounts and round(gross_total - net_total, 2) == 0:
+        return
+    row["line_total_gross"] = gross_total
+    row["line_discount"] = round(gross_total - net_total, 2)
+    if qty:
+        row["price_net"] = round(net_total / qty, 2)
+    if discounts:
+        row["discounts"] = discounts
+
+
 def parse_lidl_receipt(
     receipt: dict[str, Any], shop: str = "Lidl Varna", source: str = "lidl_receipts.json"
 ) -> dict[str, Any]:
     """Parse a receipt dict into a staging structure (no candidates).
 
-    Accepts both the Lidl JSON schema (``purchase_date``/``total_price_no_saving``,
-    item ``price`` = unit price) and a hand-transcribed receipt (``date``/``shop``/
+    Accepts both the Lidl JSON schema (``purchase_date``/``total_price``/
+    ``total_price_gross``, item ``price`` = unit price, optional per-line
+    ``net_total``/``discounts``) and a hand-transcribed receipt (``date``/``shop``/
     ``currency``/``total``, item rows with explicit ``unit``, ``unit_price`` and
     ``price`` = the printed line total).  Header keys present in the receipt win
     over the ``shop``/``source`` arguments.
+
+    Money is booked **net** (what the card was charged). ``receipt_total`` is the
+    net total; ``receipt_total_gross`` and ``receipt_discount_total`` surface the
+    pre-discount figure and the saving. Per-item, ``line_total`` is net;
+    discounted lines additionally carry ``line_total_gross``, ``line_discount``,
+    ``price_net`` and a ``discounts`` list. Receipts with no discount data (the
+    old Lidl schema, hand-transcribed trips) book gross == net and gain no
+    discount fields.
     """
     items: list[dict[str, Any]] = []
     for raw in receipt.get("items", []):
@@ -184,21 +252,34 @@ def parse_lidl_receipt(
         qty = parse_price(raw.get("quantity", "1"))
         if "unit_price" in raw:
             price = parse_price(raw["unit_price"])
-            line_total = parse_price(raw["price"])
+            gross_total = parse_price(raw["price"])
         else:
             price = parse_price(raw["price"])
-            line_total = round(price * qty, 2)
+            # Lidl prints the gross line amount as ``line_total``; fall back to
+            # price*qty for the old schema that lacked it.
+            gross_total = parse_price(raw["line_total"]) if raw.get("line_total") is not None else round(price * qty, 2)
         unit = raw.get("unit") or ("kg" if name.upper().rstrip().endswith(_KG_SUFFIX) else "pcs")
         row = _new_item_row(name, price, qty, unit)
-        row["line_total"] = line_total
+        _apply_line_money(row, raw, price, qty, gross_total)
         items.append(row)
+
+    gross = parse_price(
+        receipt.get("total_price_gross", receipt.get("total_price_no_saving", receipt.get("total", "0")))
+    )
+    net = parse_price(receipt["total_price"]) if receipt.get("total_price") is not None else gross
+    if receipt.get("discount_total") is not None:
+        discount_total = parse_price(receipt["discount_total"])
+    else:
+        discount_total = round(gross - net, 2)
 
     return {
         "session": receipt_date(receipt),
         "shop": receipt.get("shop") or shop,
         "store": receipt.get("store"),
         "currency": receipt.get("currency", "EUR"),
-        "receipt_total": parse_price(receipt.get("total_price_no_saving", receipt.get("total", "0"))),
+        "receipt_total": net,
+        "receipt_total_gross": gross,
+        "receipt_discount_total": discount_total,
         "source": source,
         "items": items,
         "loose_photos": [],

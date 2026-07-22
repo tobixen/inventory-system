@@ -138,7 +138,9 @@ def lidl_receipt_to_rows(
             receipt_name=item["receipt_name"],
             qty=item["qty"],
             unit=item["unit"],
-            unit_price=item["price"],
+            # Net per-unit price on a discounted line, else the plain unit price.
+            unit_price=item.get("price_net", item["price"]),
+            # line_total is the net (charged) amount — see parse_lidl_receipt.
             total_=item["line_total"],
             source=source,
         )
@@ -264,8 +266,11 @@ def staging_to_rows(staging: dict[str, Any]) -> list[dict[str, Any]]:
                 receipt_name=item.get("receipt_name"),
                 qty=item.get("qty"),
                 unit=item.get("unit", "pcs"),
-                unit_price=item.get("price"),
-                # line_total (the receipt's printed amount) is authoritative; price*qty
+                # Net per-unit price on a discounted line (``price_net``), else the
+                # plain unit price. The ledger books the net paid price so the Open
+                # Prices publisher posts what was actually paid (gross via --discount).
+                unit_price=item.get("price_net") if item.get("price_net") is not None else item.get("price"),
+                # line_total is the net (charged) amount and is authoritative; price*qty
                 # is only a fallback and re-derives from rounded inputs — wrong by a cent
                 # on weighed goods. See scripts/staging.py for the field semantics.
                 total_=item.get("line_total", round(item.get("price", 0) * item.get("qty", 0), 2)),

@@ -199,14 +199,14 @@ and it's the proof artifact here.
 |---|---|---|---|
 | `proof_id` | **yes** | uploaded receipt photo | one per receipt, reused |
 | `product_code` | per PRODUCT | `ean` | GTIN/EAN |
-| `price` | yes (effectively) | `unit_price` | **net per-unit** (we already store net) |
+| `price` | yes (effectively) | `unit_price` | **net per-unit** — the ledger books the net paid price (`price_net` on a discounted staging line) |
 | `currency` | yes | `currency` | ISO 4217; enum-validated |
 | `date` | yes | `date` | receipt date |
 | `price_per` | — | derive from `price:.../UNIT` | `UNIT` or `KILOGRAM` only |
 | `type` | yes | constant | `PRODUCT` (has EAN) / `CATEGORY` (produce) |
 | `category_tag` | per CATEGORY | `category` | for barcodeless produce |
 | `location_osm_id`+`location_osm_type` *or* `location_id` | yes | **shop → OSM map (TODO)** | see below |
-| `price_is_discounted`, `price_without_discount`, `discount_type` | — | not captured yet | `discount_type` ∈ QUANTITY/SALE/SEASONAL/LOYALTY_PROGRAM/EXPIRES_SOON/PICK_IT_YOURSELF/SECOND_HAND/OTHER |
+| `price_is_discounted`, `price_without_discount`, `discount_type` | — | staging `line_total_gross` + `discounts[].openprices_type`, passed via `--discount EAN=GROSS[:TYPE]` | `discount_type` ∈ QUANTITY/SALE/SEASONAL/LOYALTY_PROGRAM/EXPIRES_SOON/PICK_IT_YOURSELF/SECOND_HAND/OTHER. A discounted staging line surfaces the pre-discount per-unit price (`line_total_gross / qty`) and the mapped `openprices_type` (Lidl Plus coupon → LOYALTY_PROGRAM, in-store markdown → EXPIRES_SOON) — build the `--discount` flag from those |
 | `product_name` | — | `name` | optional |
 
 **Loose ends to decide:**

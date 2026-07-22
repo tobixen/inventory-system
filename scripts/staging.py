@@ -17,11 +17,31 @@ Per-item money/quantity fields (each entry of ``items:``):
   the price of one piece; for a weighed line (``unit: kg``) it is the per-kg
   price, *not* the price paid for the line.
 * ``qty``        — quantity in the same ``unit`` (e.g. ``1.768`` for 1.768 kg).
-* ``line_total`` — the amount actually paid for the line, as printed on the
-  receipt. **This is authoritative** and should be trusted over ``price * qty``:
-  for weighed goods ``price * qty`` re-derives the total from rounded inputs and
-  can be off by a cent. ``shop_import`` always emits ``line_total``; consumers
-  fall back to ``round(price * qty, 2)`` only when it is missing.
+* ``line_total`` — the **net** amount actually charged for the line, as printed
+  on the receipt. **This is authoritative** and should be trusted over
+  ``price * qty``: for weighed goods ``price * qty`` re-derives the total from
+  rounded inputs and can be off by a cent. ``shop_import`` always emits
+  ``line_total``; consumers fall back to ``round(price * qty, 2)`` only when it
+  is missing.
+
+Per-item discount fields — present **only on a discounted line**, absent
+otherwise (so hand-transcribed and undiscounted receipts stay clean; a consumer
+must treat their absence as "no discount", never as zero):
+
+* ``line_total_gross`` — the pre-discount line amount.
+* ``line_discount``    — ``line_total_gross - line_total`` (the saving).
+* ``price_net``        — the net per-unit price (``line_total / qty``); this is
+  what the Open Prices publisher posts as the paid price, with
+  ``line_total_gross`` supplied as ``--discount EAN=GROSS``.
+* ``discounts``        — a list (a line can carry several discounts of different
+  kinds — e.g. a Lidl Plus coupon *and* a short-expiry markdown), each
+  ``{amount, type, openprices_type, label[, percent]}``. ``type`` is the raw kind
+  (``lidlplus_coupon`` / ``markdown``); ``openprices_type`` is the mapped Open
+  Prices ``discount_type`` (``LOYALTY_PROGRAM`` / ``EXPIRES_SOON`` / ``SALE``).
+
+Top-level money fields: ``receipt_total`` is the **net** charged total;
+``receipt_total_gross`` and ``receipt_discount_total`` surface the pre-discount
+total and the saving so a reviewer sees both.
 
 Per-item routing flags:
 

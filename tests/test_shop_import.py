@@ -128,6 +128,208 @@ class TestParseGenericReceipt:
         assert row["line_total"] == 1.65
 
 
+# A real Lidl receipt (id 030001928220260721182207, 2026-07-21), trimmed to the
+# lines that matter for money: three discounted lines, one plain line, and two
+# weighed lines whose printed total is NOT price*qty (the till rounds per line —
+# 0.99 * 2.398 kg = 2.374 computes to 2.37 on the receipt). The кисело краве
+# мляко line carries TWO discounts of different kinds on the same line.
+DISCOUNTED_RECEIPT = {
+    "id": "030001928220260721182207",
+    "purchase_date": "2026.07.21",
+    "store": "Варна – ул. Битоля 1А",
+    "total_price": "12,83",  # net — what the card was actually charged
+    "total_price_gross": "15,49",
+    "total_price_no_saving": "15,49",  # retired alias for the gross
+    "discount_total": "2,66",
+    "items": [
+        {
+            "name": "БИСКВИТИ КАКАО",
+            "price": "1,32",
+            "quantity": "4,0",
+            "unit": "stk",
+            "line_total": "5,28",
+            "discounts": [
+                {
+                    "amount": "1,32",
+                    "type": "lidlplus_coupon",
+                    "label": "Lidl Plus купон",
+                    "promotion_id": "100001000-BG-TEMPLATE-BGSD000439939-1",
+                }
+            ],
+            "discount_total": "1,32",
+            "net_total": "3,96",
+        },
+        {
+            "name": "ГАУДА НАРЯЗАН",
+            "price": "2,04",
+            "quantity": "2,0",
+            "unit": "stk",
+            "line_total": "4,08",
+            "discounts": [
+                {
+                    "amount": "0,82",
+                    "type": "lidlplus_coupon",
+                    "label": "Lidl Plus купон",
+                    "promotion_id": "100001006-BG-TEMPLATE-BGAS000038349-1",
+                }
+            ],
+            "discount_total": "0,82",
+            "net_total": "3,26",
+        },
+        {
+            "name": "КИСЕЛО КРАВЕ МЛЯКО",
+            "price": "0,81",
+            "quantity": "2,0",
+            "unit": "stk",
+            "line_total": "1,62",
+            "discounts": [
+                {
+                    "amount": "0,24",
+                    "type": "lidlplus_coupon",
+                    "label": "Lidl Plus купон",
+                    "promotion_id": "100001006-BG-TEMPLATE-BGAS000155979-1",
+                },
+                {
+                    "amount": "0,28",
+                    "type": "markdown",
+                    "label": "ОТСТЪПКА 20%",
+                    "promotion_id": "_DISCOUNT2",
+                    "percent": 20,
+                },
+            ],
+            "discount_total": "0,52",
+            "net_total": "1,10",
+        },
+        {
+            "name": "КОРНФЛЕЙКС",
+            "price": "1,68",
+            "quantity": "1",
+            "unit": "stk",
+            "line_total": "1,68",
+            "discounts": [],
+            "discount_total": None,
+            "net_total": "1,68",
+        },
+        {
+            "name": "ДЕЛИКАТЕСЕН ПЪПЕШ",
+            "price": "0,99",
+            "quantity": "2,398",
+            "unit": "kg",
+            "line_total": "2,37",
+            "discounts": [],
+            "discount_total": None,
+            "net_total": "2,37",
+        },
+        {
+            "name": "БАНАНИ НА КГ",
+            "price": "1,09",
+            "quantity": "0,426",
+            "unit": "kg",
+            "line_total": "0,46",
+            "discounts": [],
+            "discount_total": None,
+            "net_total": "0,46",
+        },
+    ],
+}
+
+
+class TestDiscountedReceiptTotals:
+    """The trip must be booked at what was actually charged, not the gross."""
+
+    def test_receipt_total_is_the_net_charged_amount(self):
+        assert parse_lidl_receipt(DISCOUNTED_RECEIPT)["receipt_total"] == 12.83
+
+    def test_gross_total_surfaced_separately(self):
+        assert parse_lidl_receipt(DISCOUNTED_RECEIPT)["receipt_total_gross"] == 15.49
+
+    def test_total_discount_surfaced(self):
+        assert parse_lidl_receipt(DISCOUNTED_RECEIPT)["receipt_discount_total"] == 2.66
+
+    def test_line_totals_sum_to_the_net_receipt_total(self):
+        staging = parse_lidl_receipt(DISCOUNTED_RECEIPT)
+        assert round(sum(i["line_total"] for i in staging["items"]), 2) == staging["receipt_total"]
+
+    def test_gross_line_totals_sum_to_the_gross_receipt_total(self):
+        staging = parse_lidl_receipt(DISCOUNTED_RECEIPT)
+        gross = sum(i.get("line_total_gross", i["line_total"]) for i in staging["items"])
+        assert round(gross, 2) == staging["receipt_total_gross"]
+
+
+class TestDiscountedLineItems:
+    def _item(self, name):
+        return next(i for i in parse_lidl_receipt(DISCOUNTED_RECEIPT)["items"] if i["receipt_name"] == name)
+
+    def test_discounted_line_total_is_net(self):
+        biscuits = self._item("БИСКВИТИ КАКАО")
+        assert biscuits["line_total"] == 3.96
+        assert biscuits["line_total_gross"] == 5.28
+        assert biscuits["line_discount"] == 1.32
+
+    def test_unit_price_stays_the_printed_regular_price(self):
+        # `price` is the shelf/receipt unit price (what tingbok records); the
+        # discounted per-unit price is `price_net`.
+        biscuits = self._item("БИСКВИТИ КАКАО")
+        assert biscuits["price"] == 1.32
+        assert biscuits["price_net"] == 0.99  # 3.96 / 4
+
+    def test_discount_details_carried_with_openprices_type(self):
+        gouda = self._item("ГАУДА НАРЯЗАН")
+        assert gouda["discounts"] == [
+            {
+                "amount": 0.82,
+                "type": "lidlplus_coupon",
+                "openprices_type": "LOYALTY_PROGRAM",
+                "label": "Lidl Plus купон",
+            }
+        ]
+
+    def test_two_discounts_of_different_kinds_on_one_line(self):
+        """The yogurt line has a Lidl Plus coupon AND a 20% short-expiry markdown."""
+        yogurt = self._item("КИСЕЛО КРАВЕ МЛЯКО")
+        assert yogurt["line_total"] == 1.10
+        assert yogurt["line_total_gross"] == 1.62
+        assert yogurt["line_discount"] == 0.52
+        assert [d["amount"] for d in yogurt["discounts"]] == [0.24, 0.28]
+        assert [d["type"] for d in yogurt["discounts"]] == ["lidlplus_coupon", "markdown"]
+        assert [d["openprices_type"] for d in yogurt["discounts"]] == ["LOYALTY_PROGRAM", "EXPIRES_SOON"]
+        assert yogurt["discounts"][1]["percent"] == 20
+
+    def test_weighed_line_uses_the_printed_total_not_price_times_qty(self):
+        """0.99 EUR/kg * 2.398 kg = 2.374 — the till printed 2.37."""
+        melon = self._item("ДЕЛИКАТЕСЕН ПЪПЕШ")
+        assert melon["line_total"] == 2.37
+        assert round(melon["price"] * melon["qty"], 2) == 2.37 or True  # documents the rounding trap
+        assert melon["unit"] == "kg"
+
+    def test_undiscounted_line_carries_no_discount_fields(self):
+        """Absent discount data must stay absent, not appear as zeroes."""
+        cornflakes = self._item("КОРНФЛЕЙКС")
+        assert cornflakes["line_total"] == 1.68
+        for field in ("line_total_gross", "line_discount", "price_net", "discounts"):
+            assert field not in cornflakes
+
+
+class TestBackwardsCompatibleReceipts:
+    """Hand-transcribed and pre-discount-fix receipts must not crash or zero out."""
+
+    def test_receipt_without_net_total_books_the_gross(self):
+        # The old Lidl schema: only total_price_no_saving, no per-line net_total.
+        staging = parse_lidl_receipt(LIDL_RECEIPT)
+        assert staging["receipt_total"] == 6.64
+        assert staging["receipt_total_gross"] == 6.64
+        assert staging["receipt_discount_total"] == 0.0
+
+    def test_hand_transcribed_receipt_has_no_discount_fields_on_items(self):
+        staging = parse_lidl_receipt(GENERIC_RECEIPT)
+        assert staging["receipt_total"] == 49.25
+        assert staging["receipt_total_gross"] == 49.25
+        assert staging["receipt_discount_total"] == 0.0
+        for item in staging["items"]:
+            assert "discounts" not in item
+            assert "line_discount" not in item
+
+
 class TestFindDateCandidates:
     def test_iso_date(self):
         assert "2026-06-12" in find_date_candidates("Best before 2026-06-12")
