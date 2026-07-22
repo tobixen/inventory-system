@@ -263,6 +263,64 @@ class TestStagingToRows:
         assert row["inventory_id"] == "milk-2026-05-28"
         assert row["total"] == 1.49
 
+    def test_combines_identical_lines(self):
+        # A receipt with the same product on two qty-1 lines (e.g. two identical
+        # butters) must combine into one qty-2 row, or upsert_rows collapses them
+        # by identity and silently drops one (undercount by the line total).
+        staging = {
+            "session": "2026-07-08",
+            "shop": "Бурлекс Галата",
+            "currency": "EUR",
+            "items": [
+                {"receipt_name": "МАСЛО КРАВЕ ЛУРПАК", "price": 4.09, "qty": 1, "line_total": 4.09},
+                {"receipt_name": "МАСЛО КРАВЕ ЛУРПАК", "price": 4.09, "qty": 1, "line_total": 4.09},
+            ],
+        }
+        rows = staging_to_rows(staging)
+        assert len(rows) == 1
+        assert rows[0]["qty"] == 2
+        assert rows[0]["total"] == 8.18
+
+    def test_discounted_line_is_booked_net(self):
+        # A reviewed staging row for a discounted line carries the net line_total
+        # (what was charged) and the net per-unit price. The ledger must book net,
+        # and unit_price must be the net paid price so the Open Prices publisher
+        # posts the paid price (with the gross supplied as --discount GROSS).
+        staging = {
+            "session": "2026-07-21",
+            "shop": "Lidl Varna",
+            "currency": "EUR",
+            "items": [
+                {
+                    "receipt_name": "БИСКВИТИ КАКАО",
+                    "price": 1.32,  # regular per-unit price (kept for tingbok)
+                    "price_net": 0.99,  # net per-unit after the coupon
+                    "qty": 4.0,
+                    "unit": "stk",
+                    "line_total": 3.96,  # net — authoritative charged amount
+                    "line_total_gross": 5.28,
+                    "line_discount": 1.32,
+                    "ean": "5474146604470",
+                },
+            ],
+        }
+        row = staging_to_rows(staging)[0]
+        assert row["total"] == 3.96  # booked net, not the 5.28 gross
+        assert row["unit_price"] == 0.99  # net paid per-unit for Open Prices
+
+    def test_undiscounted_line_unit_price_is_the_plain_price(self):
+        staging = {
+            "session": "2026-07-21",
+            "shop": "Lidl Varna",
+            "currency": "EUR",
+            "items": [
+                {"receipt_name": "КОРНФЛЕЙКС", "price": 1.68, "qty": 1.0, "unit": "stk", "line_total": 1.68},
+            ],
+        }
+        row = staging_to_rows(staging)[0]
+        assert row["unit_price"] == 1.68
+        assert row["total"] == 1.68
+
     def test_retired_multishop_schema_raises(self):
         # The multi-shop ``shops:`` wrapper used to import 0 rows silently.
         staging = {

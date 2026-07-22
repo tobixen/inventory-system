@@ -277,7 +277,11 @@ def staging_to_rows(staging: dict[str, Any]) -> list[dict[str, Any]]:
                 source=source,
             )
         )
-    return rows
+    # Same as the Lidl/Decathlon importers: a receipt that prints the same product
+    # on two qty-1 lines must merge to one qty-2 row, else upsert_rows collapses
+    # them by identity and silently drops one (undercount — bit us on the Бурлекс
+    # 2026-07-08 trip: two 4.09 Lurpak butters booked as one, 4.09 short).
+    return combine_duplicate_lines(rows)
 
 
 # --------------------------------------------------------------------------- #
