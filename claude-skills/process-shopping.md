@@ -355,8 +355,11 @@ This skill and the scripts are quite fresh.  For each run, try to pinpoint probl
   helper so the whole skill runs unattended.
 * Shop OSM cache too coarse — Lidl/Billa have **many branches per city**, so even
   "Lidl Varna" names one specific store.
-  * Done: `match_shop_osm` now refuses to silently pick among multiple matches (returns
-    nothing and lists the candidates); cache keys re-keyed to include the branch street.
+  * Done: `match_shop_osm` resolves on an **exact** (case-insensitive) cache key only,
+    returning nothing and listing the candidate branches otherwise; cache keys re-keyed
+    to include the branch street. It formerly fell back to an *unambiguous* substring
+    match, which was not enough: with only one Billa cached there is nothing to be
+    ambiguous about, so a 2026-07-24 trip to Billa Sozopol resolved to the Varna branch.
   * When caching a new shop, key it by branch (shop + street), and confirm the OSM object
     is that exact store before publishing Open Prices.
 * Fixed 2026-07-09 (Бурлекс run friction):

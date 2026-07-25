@@ -7,6 +7,7 @@ sys.path.insert(0, str(__file__).rsplit("/tests/", 1)[0] + "/scripts")
 from shopping_context import (  # noqa: E402
     find_staging_files,
     grep_diary_lines,
+    main,
     match_shop_osm,
     read_diary_text,
     recent_ledger_rows,
@@ -24,12 +25,28 @@ class TestMatchShopOsm:
     def test_exact(self):
         assert match_shop_osm(self.CACHE, "Lidl Varna")["osm_id"] == 235500005
 
-    def test_case_insensitive_substring(self):
-        # One Lidl cached → a bare "lidl" still resolves unambiguously.
-        assert match_shop_osm(self.CACHE, "lidl")["osm_id"] == 235500005
+    def test_exact_is_case_insensitive(self):
+        # Case and surrounding whitespace do not change *which* branch is meant.
+        assert match_shop_osm(self.CACHE, "lidl varna")["osm_id"] == 235500005
+        assert match_shop_osm(self.CACHE, "  Lidl Varna  ")["osm_id"] == 235500005
 
     def test_no_match(self):
         assert match_shop_osm(self.CACHE, "Praktiker Varna") is None
+
+    def test_bare_chain_name_never_resolves(self):
+        """The 2026-07-24 Sozopol bug: one Billa cached, so nothing to disambiguate.
+
+        ``shopping_context.py "Billa"`` returned WAY:1016681733 — the *Varna*
+        branch — for a trip to the Sozopol one. Being the only cached Billa is
+        not evidence of being the right Billa; the cache is branch-keyed, so a
+        bare chain name is simply not a key and must resolve to nothing.
+        """
+        assert match_shop_osm(self.CACHE, "Billa") is None
+        assert match_shop_osm(self.CACHE, "lidl") is None
+
+    def test_partial_branch_key_never_resolves(self):
+        # A prefix of the real key is still not the key.
+        assert match_shop_osm({"Billa Varna ул. Андрей Сахаров": {"osm_id": 1}}, "Billa Varna") is None
 
     def test_ambiguous_substring_refuses_to_guess(self):
         # Two branches of the same chain: a bare "lidl" must NOT silently pick one.
@@ -52,6 +69,44 @@ class TestMatchShopOsm:
             "Lidl Varna Вл. Варненчик",
             "Lidl Varna Цар Освободител",
         ]
+
+
+class TestMainOsmReporting:
+    """A refused match must print the candidate branch keys, not just 'not cached'."""
+
+    CACHE = {
+        "Billa Varna ул. Андрей Сахаров": {"osm_type": "WAY", "osm_id": 1016681733},
+        "Lidl Varna": {"osm_type": "WAY", "osm_id": 235500005},
+    }
+
+    def _run(self, tmp_path: Path, shop: str) -> str:
+        import io
+        import json as _json
+        from contextlib import redirect_stdout
+
+        cache = tmp_path / "shop-osm.json"
+        cache.write_text(_json.dumps(self.CACHE), encoding="utf-8")
+        (tmp_path / "staging").mkdir(exist_ok=True)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            main([shop, "--osm-cache", str(cache), "--staging-dir", str(tmp_path / "staging")])
+        return buf.getvalue()
+
+    def test_partial_match_lists_branch_keys_and_does_not_resolve(self, tmp_path):
+        osm_section = self._run(tmp_path, "Billa").split("## Recent staging files")[0]
+        assert "Billa Varna ул. Андрей Сахаров" in osm_section
+        # The whole point: no resolved OSM object is reported. Candidates are listed
+        # by branch key only — printing their ids alongside would invite copy-pasting
+        # one without checking the branch, which is the bug this fix exists for.
+        assert "1016681733" not in osm_section
+
+    def test_exact_match_still_reports_the_object(self, tmp_path):
+        out = self._run(tmp_path, "Lidl Varna")
+        assert "WAY:235500005" in out
+
+    def test_unknown_shop_says_not_cached(self, tmp_path):
+        out = self._run(tmp_path, "Decathlon")
+        assert "not cached" in out
 
 
 class TestStagingFiles:

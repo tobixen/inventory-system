@@ -119,8 +119,7 @@ def select_receipt(
     back the older trip.
 
     A selector matching several receipts (two visits in one day is normal)
-    raises :class:`ValueError` listing them, rather than guessing — same policy
-    as ``shopping_context.match_shop_osm``.
+    raises :class:`ValueError` listing them, rather than guessing.
     """
     if isinstance(receipts, dict):
         return receipts

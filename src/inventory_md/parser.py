@@ -619,8 +619,7 @@ def find_container_section(lines: list[str], container_id: str) -> tuple[int, in
     ("#", "##", "###", …).  Handles nested sub-containers at any depth.  Returns
     None if no heading with ID:<container_id> is found.
 
-    Resolution is deliberately two-pass, mirroring
-    ``scripts/shopping_context.py::match_shop_osm``:
+    Resolution is deliberately two-pass:
 
     1. An **exact** (case-insensitive) ID match always wins.
     2. Only if there is none do we fall back to a prefix match, and only when it

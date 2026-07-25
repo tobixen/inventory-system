@@ -50,25 +50,30 @@ def shop_osm_candidates(cache: dict[str, Any], shop: str) -> list[str]:
 
 
 def match_shop_osm(cache: dict[str, Any], shop: str) -> dict[str, Any] | None:
-    """Find a cached OSM entry whose key matches *shop* (case-insensitive).
+    """Find the cached OSM entry keyed exactly by *shop* (case-insensitive).
 
-    Exact (case-insensitive) match wins. Otherwise fall back to a substring
-    match in either direction (so ``"lidl"`` finds ``"Lidl Varna"``) — but only
-    when it is *unambiguous*. A chain like Lidl has many branches; once two
-    (``"Lidl Varna"``, ``"Lidl Sofia"``) are cached, a bare ``"lidl"`` must not
-    silently resolve to whichever happens to come first — Open Prices
-    coordinates have to point at one real store. Ambiguous → ``None`` (the
-    caller lists the candidates and asks for the exact name).
+    Nothing else resolves. The cache is **branch-keyed** (``"Billa Varna ул.
+    Андрей Сахаров"``), because an Open Prices price has to point at one real
+    store — so a bare chain name like ``"Billa"`` is not an under-specified key,
+    it is not a key at all.
+
+    This used to fall back to an unambiguous substring match, on the theory that
+    a single cached ``"Lidl Varna"`` makes ``"lidl"`` unambiguous. It does not:
+    uniqueness in the cache is a fact about what has been visited before, not
+    about which shop the caller means. On 2026-07-24 a trip to Billa **Sozopol**
+    asked for ``"Billa"``, found the one cached Billa, and confidently returned
+    the **Varna** branch's WAY:1016681733 — a wrong location, published
+    silently, with no ambiguity for the old guard to trip on.
+
+    Callers that get ``None`` should offer :func:`shop_osm_candidates` so the
+    human can pick the exact branch key.
     """
     if not shop:
         return None
-    want = shop.casefold()
+    want = shop.strip().casefold()
     for key, val in cache.items():
-        if key.casefold() == want:
+        if key.strip().casefold() == want:
             return val
-    hits = shop_osm_candidates(cache, shop)
-    if len(hits) == 1:
-        return cache[hits[0]]
     return None
 
 
@@ -180,10 +185,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {args.shop} → {hit.get('osm_type')}:{hit.get('osm_id')}")
         else:
             cands = shop_osm_candidates(cache, args.shop)
-            if len(cands) > 1:
+            if cands:
+                print(f"  '{args.shop}' is not an exact cache key. Candidate branches:")
+                for c in cands:
+                    print(f"    - {c}")
                 print(
-                    f"  '{args.shop}' is ambiguous — matches {', '.join(cands)}. "
-                    "A chain has many branches; pass the exact cached name (or --osm TYPE:ID for the right one)."
+                    "  The cache is keyed by branch, so re-run with the exact name above — but only after "
+                    "checking it is the branch you actually visited. If it is a new branch of a known chain, "
+                    "pass --osm TYPE:ID to openprices_publish once (it caches under the name you give)."
                 )
             else:
                 print(f"  not cached for '{args.shop}' — pass --osm TYPE:ID to openprices_publish once (it caches).")
