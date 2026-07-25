@@ -24,6 +24,77 @@
   staging file arrives with `ean` + `bb` already populated; only unresolved items
   get flagged for the user.
 
+## Found while processing the 2026-07-24 Sozopol shopping trip
+
+### Scope: hand the purchasing code over to `purchase-pipeline`
+
+A new project — https://github.com/tobixen/purchase-pipeline — has been created to
+own the receipt → ledger → publish layer that currently lives in `scripts/`
+(`ledger.py`, `shop_import.py`, `pipeline.py`, `shopping_context.py`,
+`tingbok_push.py`, `off_upload.py`, `openprices_publish.py`, `op_auth.py`). That
+code makes this project know about one particular person's accounting, Open Food
+Facts account and receipt formats, which it should not.
+
+The migration is task 0 in that project's TODO. What stays here: inventory format
+and parsing, `add`/`edit`/`move`/`lookup`/`container`, the vocabulary system,
+`check_quality.py`, and barcode/best-before extraction. Identifying a physical
+object is inventory's business; deciding what a purchase means is not.
+
+### `extract_barcodes.py` emits phantom checksum-valid EANs
+
+**Bug, with a regression specimen.** One photo of a Dr. Oetker vanilla sugar
+sachet (`~/s/photos.tobixen/processed/IMG_20260725_080322.jpg`) produced two
+checksum-valid EAN-13s: the true `5941132002140` and a phantom `2931532002140`.
+
+Diagnosis — compare them:
+
+```
+real     5 9 4 1 1 3 2 | 0 0 2 1 4 0
+phantom  2 9 3 1 5 3 2 | 0 0 2 1 4 0
+```
+
+The right half is byte-identical; all corruption is in the left half. That is the
+signature of a **parity misdecode**. EAN-13's left six digits are encoded in
+either L or G parity, and the *pattern* of those choices is what encodes the 13th
+(leading) digit — it has no bars of its own. A couple of bar-width errors flipped
+digits into their opposite-parity twins (`4`↔`3`, `1`↔`5` are one module apart in
+L/G), which corrupted the parity pattern, which decoded the leading digit as `2`
+instead of `5`. The checksum is then recomputed over the corrupted digits and
+passes. **A valid checksum is not evidence of a correct read.**
+
+Fixes, cheapest first:
+
+1. **Rank candidates by whether they resolve in tingbok.** The tool already
+   prints `(unknown product)` next to the phantom and a full product record next
+   to the real one — turn that into the decision instead of a display detail.
+2. **Report conflicting candidates as `needs_review`** rather than as two peer
+   results (already noted in the generic process-shopping guide's TODO).
+3. **Raise zbar's uncertainty threshold** so a code must corroborate across
+   several scanlines before being emitted. This kills most parity misdecodes at
+   the source.
+
+Second specimen, the opposite failure: `IMG_20260725_010632.jpg` (a diving-mask
+label, EAN `8680041405983`) yielded **no** read at all, though the digits are
+plainly legible to a human. The label is torn straight through the barcode's
+right-hand quiet zone, which zbar requires, and the bars carry a striated thermal
+print texture. Multi-crop/rotation retries would not help here; recognising and
+*reporting* a damaged quiet zone might.
+
+Both photos are in `~/s/photos.tobixen/processed/` with ground truth recorded in
+`~/solveig-inventory/staging/shopping-2026-07-24-*.yaml`.
+
+### `inventory-md ean EAN` — ad-hoc barcode lookup
+
+Long-standing gap, already noted in the generic process-shopping guide. Looking up
+a manually-read EAN still requires a raw `curl GET https://tingbok.plann.no/api/ean/{ean}`,
+which is a permission prompt in an otherwise unattended workflow, and requires the
+agent to remember the hostname — which on 2026-07-25 it got wrong, from a stale
+note that has since been deleted.
+
+Add an `ean` subcommand alongside `vocabulary lookup`, using the same
+local-then-tingbok pattern. It pairs naturally with fix 1 above, which needs the
+same resolution call.
+
 ## Old stuff
 
 This needs to be cleaned up and organized, it's a mess
