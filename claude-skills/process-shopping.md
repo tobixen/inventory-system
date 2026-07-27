@@ -36,7 +36,7 @@ The staging file should be the last human gate - it should be approved by the us
 
 Start a trip with the context command instead of grepping for conventions:
 ```bash
-~/inventory-md/scripts/shopping_context.py "SHOP" --ledger $LEDGER --diary $DIARY
+shopping-context "SHOP" --ledger $LEDGER --diary $DIARY
 ```
 It prints, for the shop: the cached Open Prices OSM object, recent staging files
 (a schema example to copy), recent **ledger rows** (prior prices, EANs and the
@@ -64,14 +64,14 @@ allowlisted; grepping the markdown is neither.
 
 ```bash
 # BEFORE transcribing a photographed receipt — this chain's layout quirks:
-~/inventory-md/scripts/receipt_formats.py "Billa Sozopol"
+receipt-formats "Billa Sozopol"
 
 # Barcodes + best-before OCR on every photo (barcode shots included):
 ~/inventory-md/scripts/extract_barcodes.py --best-before $PHOTO_DIR/IMG_*.jpg --json --out barcodes.json
 
 # Receipt + photos -> human-correctable staging file (EAN candidates via tingbok
 # reverse receipt-name search; photos classified barcode/expiry/label):
-~/inventory-md/scripts/shop_import.py --receipt RECEIPT.json --barcodes-json barcodes.json \
+shop-import --receipt RECEIPT.json --barcodes-json barcodes.json \
     --out $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml
 ```
 
@@ -84,7 +84,7 @@ Receipt source: a JSON file from a receipt parser, or OCR/read a photographed
 receipt into the same shape (`date, shop, total, items[name,price,quantity]`).
 
 **Transcribing from a photo is the one place a human reads numbers off an image,
-so it is the one place a wrong reading gets in.** Run `receipt_formats.py "SHOP"`
+so it is the one place a wrong reading gets in.** Run `receipt-formats "SHOP"`
 first: it prints what is known about that chain's layout — which address line
 names the branch, whether an `N x unit_price` multiplier belongs to the line
 *above* or *below* it, how discounts and deposits print. Billa prints the
@@ -101,7 +101,7 @@ flags. A barcode photo with no date of its own is paired with the date from the
 to the source frame; treat a `bb_from` date as a positional guess to sanity-check.
 It never decides a match or invents a date.
 
-Photos needs to be manually inspected for barcodes that don't resolves and best-before dates that cannot be read by the OCR.  Run the scripts first and wait for them — the whole point of `extract_barcodes.py`/`shop_import.py` is to make manual photo inspection unnecessary.
+Photos needs to be manually inspected for barcodes that don't resolves and best-before dates that cannot be read by the OCR.  Run the scripts first and wait for them — the whole point of `extract_barcodes.py`/`shop-import` is to make manual photo inspection unnecessary.
 
 Default assumption: each photo holds **nothing but a barcode and/or an expiry date**, and a product's best-before is either in its barcode photo, in the immediately following photo, or supplied by the user.
 
@@ -119,7 +119,7 @@ anything irreversible. Re-running stage 1 is safe (idempotent ledger; staging is
 **Categories — be specific.** Use the most specific leaf category, not a broad
 bucket (`tomatoes`, not `vegetables`/`vegetable`; `cheese/kashkaval`, not
 `cheese`; `food/eggs`, `fresh-milk`). Broad buckets are useless for the
-shopping-list generator and expiry tracking, and `check_quality.py` **fails**
+shopping-list generator and expiry tracking, and the quality gate **fails**
 on them (`vegetables`, `fruit`, `nuts`, `meat`, `dairy`, `cheese`, `misc`, …).
 A broad/parent category is allowed only when no narrower concept fits — then
 exempt that item with the tag `category-broad-ok` (or run with
@@ -186,8 +186,8 @@ Once the staging file is reviewed, `pipeline.py` runs the ledger → inventory �
 tingbok steps in order (reading/advancing the `status:` block, resumable) and
 then validates (`parse` + `check_quality`):
 ```bash
-~/inventory-md/scripts/pipeline.py $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml           # dry run — plan + previews
-~/inventory-md/scripts/pipeline.py $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml --commit  # run pending stages + validate
+purchase-pipeline $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml           # dry run — plan + previews
+purchase-pipeline $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml --commit  # run pending stages + validate
 ```
 A `status:` value of `done` skips a stage; `skipped` skips it permanently (e.g.
 `tingbok_push: skipped` only when the visit has **no barcoded items at all** —
@@ -204,7 +204,7 @@ driver runs*; run them individually only to debug.
    and the final quality gate.)
 2. **Ledger** — append/enrich `$LEDGER` (one row per line item):
    ```bash
-   ~/inventory-md/scripts/ledger.py import-staging $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml --ledger $LEDGER
+   purchase-ledger import-staging $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml --ledger $LEDGER
    ```
    Append-or-enrich: a raw row from a receipt importer is later filled in place
    with `ean`/`category`/`inventory_id` by the reviewed staging import (matched on
@@ -212,8 +212,8 @@ driver runs*; run them individually only to debug.
 3. **Inventory** — write every reviewed row straight from the staging file; do
    **not** hand-edit `inventory.md`:
    ```bash
-   ~/inventory-md/scripts/inventory_import.py $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml            # dry run — preview the plan
-   ~/inventory-md/scripts/inventory_import.py $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml --commit
+   staging-to-inventory $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml            # dry run — preview the plan
+   staging-to-inventory $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml --commit
    ```
    It reads each item's `location` (→ container), `category`, `inventory_id`,
    `ean`, `bb` (an estimate marked either as a `:EST` suffix or as a separate
@@ -263,8 +263,8 @@ driver runs*; run them individually only to debug.
    merge PUT; prices/receipt_names appended, re-running is safe). Use the script,
    never a raw `curl`:
    ```bash
-   ~/inventory-md/scripts/tingbok_push.py $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml            # dry run
-   ~/inventory-md/scripts/tingbok_push.py $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml --commit
+   tingbok-push $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml            # dry run
+   tingbok-push $INVENTORY_DIR/staging/shopping-YYYY-MM-DD.yaml --commit
    ```
    It pushes only items with `to_tingbok: true` and an `ean`; per-item
    `tingbok_name`/`tingbok_categories`/`tingbok_quantity` override a poor or
@@ -273,7 +273,7 @@ driver runs*; run them individually only to debug.
    duplicate IDs, unresolvable categories). Two separate commands, not chained:
    ```bash
    inventory-md parse inventory.md
-   ~/inventory-md/scripts/check_quality.py inventory.json
+   inventory-md-check-quality inventory.json
    ```
 7. **Commit** (manual) `inventory.md` (+ staging file, + photo-registry.md if used).
    The ledger is committed in its own repo. (Personal workflows may add extra
@@ -284,13 +284,13 @@ driver runs*; run them individually only to debug.
 **Missing OFF products** (EANs that don't resolve in OFF) — create them from a
 curated YAML with front/ingredients/nutrition/packaging photos:
 ```bash
-~/inventory-md/scripts/off_upload.py --products off-products.yaml          # dry run
-~/inventory-md/scripts/off_upload.py --products off-products.yaml --commit  # writes to OFF
+off-upload --products off-products.yaml          # dry run
+off-upload --products off-products.yaml --commit  # writes to OFF
 ```
 
 **Open Prices** — publish receipt prices (auth once via `op_auth.py`):
 ```bash
-~/inventory-md/scripts/openprices_publish.py --shop "Shop" --date YYYY-MM-DD \
+openprices-publish --shop "Shop" --date YYYY-MM-DD \
     --proof RECEIPT.jpg --osm WAY:NNN [--discount EAN=GROSS:SALE] [--commit]
 # barcodeless items as CATEGORY prices:
     --no-products --category-price "en:baguettes=0.17,was=0.45,type=SALE"
@@ -308,8 +308,8 @@ are deletable; you own them).
 ## Queries
 
 ```bash
-~/inventory-md/scripts/ledger.py query --category food --since YYYY-MM-DD --until YYYY-MM-DD
-~/inventory-md/scripts/ledger.py consumed --inventory inventory.md --since … --until …
+purchase-ledger query --category food --since YYYY-MM-DD --until YYYY-MM-DD
+purchase-ledger consumed --inventory inventory.md --since … --until …
 ```
 `consumed` joins ledger rows to items removed from `inventory.md` (git history) to
 cost what was actually used in a period — only resolves for rows enriched (ean/
@@ -317,19 +317,27 @@ category/inventory_id) through the reviewed staging flow.
 
 ## Tools
 
-| Script (`~/inventory-md/scripts/`) | Role |
-|---|---|
-| `shopping_context.py` | read-only trip context: shop OSM, recent staging |
-| `extract_barcodes.py --best-before` | barcodes + best-before OCR per photo |
-| `inventory_md.bb_dates` (package, not `scripts/`) | OCR-text → best-before date candidates (library) |
-| `shop_import.py` | receipt + photos → staging YAML |
-| `pipeline.py` | drive Stage-3 commit (ledger→inventory→tingbok→validate) from `status:` |
-| `ledger.py` | purchases.jsonl: import / query / consumed |
-| `inventory_import.py` | write reviewed staging rows into `inventory.md` |
-| `tingbok_push.py` | push reviewed price/receipt-name observations to tingbok |
-| `check_quality.py` | validation gate (food-bb, dup IDs, categories) |
-| `off_upload.py` | create missing OFF products |
-| `openprices_publish.py` / `op_auth.py` | publish prices / mint token |
+All the purchasing commands below are console scripts from
+[purchase-pipeline](https://github.com/tobixen/purchase-pipeline) — on PATH once
+it is installed, no paths to remember. Only `extract_barcodes.py` and the
+quality gate belong to inventory-md: identifying a physical object is inventory's
+business, deciding what a purchase *means* is not.
+
+| Command | Project | Role |
+|---|---|---|
+| `shopping-context` | purchase-pipeline | read-only trip context: shop OSM, recent staging |
+| `receipt-formats` | purchase-pipeline | per-chain receipt layout quirks, before transcribing |
+| `shop-import` | purchase-pipeline | receipt + photos → staging YAML |
+| `purchase-pipeline` | purchase-pipeline | drive Stage-3 commit (ledger→inventory→tingbok→validate) from `status:` |
+| `purchase-ledger` | purchase-pipeline | purchases.jsonl: import / query / consumed |
+| `staging-to-inventory` | purchase-pipeline | write reviewed staging rows into `inventory.md` |
+| `tingbok-push` | purchase-pipeline | push reviewed price/receipt-name observations to tingbok |
+| `off-upload` | purchase-pipeline | create missing OFF products |
+| `openprices-publish` / `openprices-auth` | purchase-pipeline | publish prices / mint token |
+| `check-grocery-ledger` | purchase-pipeline | diary↔ledger coverage gate |
+| `~/inventory-md/scripts/extract_barcodes.py --best-before` | inventory-md | barcodes + best-before OCR per photo |
+| `inventory_md.bb_dates` | inventory-md | OCR-text → best-before date candidates (library) |
+| `inventory-md-check-quality` | inventory-md | validation gate (food-bb, dup IDs, categories) |
 
 `tingbok` (`GET/PUT /api/ean/{ean}`, `GET /api/ean/search?receipt_name=`) is the
 EAN/category/price aggregator. There is **no `ean_cache.json`** — use tingbok.

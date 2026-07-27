@@ -69,6 +69,10 @@ dev = [
 
 [project.scripts]
 inventory-md = "inventory_md.cli:main"
+# The quality gate is a console script so purchase-pipeline can run it by
+# name (like `inventory-md parse`) instead of hardcoding a path into a
+# sibling checkout of this repo.
+inventory-md-check-quality = "inventory_md.check_quality:main"
 
 [project.urls]
 Repository = "https://github.com/tobixen/inventory-md"

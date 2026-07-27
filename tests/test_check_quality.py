@@ -1,12 +1,10 @@
 """Tests for check_quality food best-before enforcement."""
 
-import sys
 from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, str(__file__).rsplit("/tests/", 1)[0] + "/scripts")
-from check_quality import (  # noqa: E402
+from inventory_md.check_quality import (
     DEFAULT_BROAD_CATEGORIES,
     OVERRIDE_BROAD_TAGS,
     _category_is_food,
@@ -18,7 +16,7 @@ from check_quality import (  # noqa: E402
     load_inventory_lang,
     run_all_checks,
 )
-from check_quality import (
+from inventory_md.check_quality import (
     main as cq_main,
 )
 
