@@ -196,6 +196,7 @@ _STAGING = {
     "session": "2026-06-14",
     "shop": "Lidl",
     "currency": "EUR",
+    "receipt_total": 3.27,  # 1.29 milk + 2 × 0.99 chocolate; the bag is free
     "items": [
         {
             "category": "milk",

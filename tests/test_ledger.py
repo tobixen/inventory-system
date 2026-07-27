@@ -242,6 +242,7 @@ class TestStagingToRows:
             "session": "2026-05-28",
             "shop": "Lidl Varna",
             "currency": "EUR",
+            "receipt_total": 1.49,
             "items": [
                 {
                     "receipt_name": "ПРЯСНО МЛЯКО 3,7%",
@@ -271,6 +272,7 @@ class TestStagingToRows:
             "session": "2026-07-08",
             "shop": "Бурлекс Галата",
             "currency": "EUR",
+            "receipt_total": 8.18,
             "items": [
                 {"receipt_name": "МАСЛО КРАВЕ ЛУРПАК", "price": 4.09, "qty": 1, "line_total": 4.09},
                 {"receipt_name": "МАСЛО КРАВЕ ЛУРПАК", "price": 4.09, "qty": 1, "line_total": 4.09},
@@ -290,6 +292,7 @@ class TestStagingToRows:
             "session": "2026-07-21",
             "shop": "Lidl Varna",
             "currency": "EUR",
+            "receipt_total": 3.96,
             "items": [
                 {
                     "receipt_name": "БИСКВИТИ КАКАО",
@@ -313,6 +316,7 @@ class TestStagingToRows:
             "session": "2026-07-21",
             "shop": "Lidl Varna",
             "currency": "EUR",
+            "receipt_total": 1.68,
             "items": [
                 {"receipt_name": "КОРНФЛЕЙКС", "price": 1.68, "qty": 1.0, "unit": "stk", "line_total": 1.68},
             ],
@@ -432,6 +436,7 @@ class TestUpsert:
             "session": "2026-05-28",
             "shop": "Lidl Varna",
             "currency": "EUR",
+            "receipt_total": 1.17,
             "items": [
                 {
                     "receipt_name": "СВЕТЛА БИРА 3,0%",

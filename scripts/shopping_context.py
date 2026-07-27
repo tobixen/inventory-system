@@ -146,10 +146,15 @@ def recent_ledger_rows(ledger_text: str, shop: str, limit: int) -> list[dict[str
 
 NEXT_COMMANDS = """\
 Canonical next commands (run ONE per shell call — never chain with && / | / ;):
+  0. receipt_formats.py "SHOP"   # BEFORE transcribing a photographed receipt:
+         this chain's layout quirks (multiplier-line position, which address is
+         the branch, how discounts/deposits print). Skipping it is how the
+         2026-07-24 Billa trip billed three beers to a pack of cleaning cloths.
   1. extract_barcodes.py --best-before PHOTOS --json --out staging/barcodes-DATE.json
   2. shop_import.py --receipt R.json --barcodes-json staging/barcodes-DATE.json \\
          --out staging/shopping-DATE[-shop].yaml
-  3. (review the staging file by hand — the one human gate)
+  3. (review the staging file by hand — the one human gate; the line items MUST
+      sum to the printed receipt_total or every consumer will refuse the file)
   4. pipeline.py staging/shopping-DATE[-shop].yaml            # dry run
   5. pipeline.py staging/shopping-DATE[-shop].yaml --commit   # ledger+inventory+tingbok+validate
   6. diary-update --directory DIARY_DIR -d DATE -a AMOUNT -c CUR -t TYPE --description "..."

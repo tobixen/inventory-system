@@ -63,6 +63,9 @@ allowlisted; grepping the markdown is neither.
 ## Stage 1 — import (deterministic)
 
 ```bash
+# BEFORE transcribing a photographed receipt — this chain's layout quirks:
+~/inventory-md/scripts/receipt_formats.py "Billa Sozopol"
+
 # Barcodes + best-before OCR on every photo (barcode shots included):
 ~/inventory-md/scripts/extract_barcodes.py --best-before $PHOTO_DIR/IMG_*.jpg --json --out barcodes.json
 
@@ -79,6 +82,18 @@ has more than one visit, suffix the file with the shop, e.g.
 
 Receipt source: a JSON file from a receipt parser, or OCR/read a photographed
 receipt into the same shape (`date, shop, total, items[name,price,quantity]`).
+
+**Transcribing from a photo is the one place a human reads numbers off an image,
+so it is the one place a wrong reading gets in.** Run `receipt_formats.py "SHOP"`
+first: it prints what is known about that chain's layout — which address line
+names the branch, whether an `N x unit_price` multiplier belongs to the line
+*above* or *below* it, how discounts and deposits print. Billa prints the
+multiplier above its item, and on 2026-07-24 the naive top-down reading billed
+three beers to a pack of cleaning cloths. Nothing on the photo distinguishes the
+two readings — **only the total does**, which is why the transcribed line items
+must sum to the printed `receipt_total`; every consumer refuses the file
+otherwise (`staging.reconcile_total`). If the chain has no entry yet, transcribe
+conservatively and add one afterwards, with a `source` naming the receipt.
 The importer emits one row per line item with `ean_candidates`, a classified
 `loose_photos` list (each may carry a `bb` from the OCR pass), and `needs_review`
 flags. A barcode photo with no date of its own is paired with the date from the
