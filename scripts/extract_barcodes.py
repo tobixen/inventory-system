@@ -81,8 +81,9 @@ except ImportError:
 CACHE_FILE = Path("ean_cache.json")
 
 try:
-    # Same scripts/ dir; available when run as a script or imported with scripts on path.
-    from bb_dates import extract_best_before
+    # bb_dates lives in the package (not scripts/) so it can be imported by
+    # purchase-pipeline, which parses receipt dates with the same parser.
+    from inventory_md.bb_dates import extract_best_before
 except ImportError:  # pragma: no cover
     extract_best_before = None
 

@@ -1,9 +1,6 @@
 """Tests for bb_dates — best-before date extraction from OCR text."""
 
-import sys
-
-sys.path.insert(0, str(__file__).rsplit("/tests/", 1)[0] + "/scripts")
-from bb_dates import extract_best_before, find_dates  # noqa: E402
+from inventory_md.bb_dates import extract_best_before, find_dates
 
 
 class TestFindDates:

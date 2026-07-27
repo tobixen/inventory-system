@@ -321,7 +321,7 @@ category/inventory_id) through the reviewed staging flow.
 |---|---|
 | `shopping_context.py` | read-only trip context: shop OSM, recent staging |
 | `extract_barcodes.py --best-before` | barcodes + best-before OCR per photo |
-| `bb_dates.py` | OCR-text → best-before date candidates (library) |
+| `inventory_md.bb_dates` (package, not `scripts/`) | OCR-text → best-before date candidates (library) |
 | `shop_import.py` | receipt + photos → staging YAML |
 | `pipeline.py` | drive Stage-3 commit (ledger→inventory→tingbok→validate) from `status:` |
 | `ledger.py` | purchases.jsonl: import / query / consumed |

@@ -41,7 +41,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from bb_dates import find_dates  # date parsing shared with extract_barcodes
+from inventory_md.bb_dates import find_dates  # date parsing shared with extract_barcodes
 
 try:
     import niquests as requests
