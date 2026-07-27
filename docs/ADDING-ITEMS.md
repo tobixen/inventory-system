@@ -279,7 +279,7 @@ verified against the physical product.
 
 ### tingbok — for any barcoded product
 
-The shopping pipeline's pusher, `scripts/tingbok_push.py`, is not coupled to the
+The shopping pipeline's pusher, `tingbok-push` (from purchase-pipeline), is not coupled to the
 rest of the pipeline — it reads a staging YAML and PUTs a merge (existing
 prices/receipt_names are appended to, not overwritten). For a single found item,
 hand-write a minimal staging file and run it directly:
@@ -296,8 +296,8 @@ items:
     tingbok_quantity: 550g
 ```
 ```bash
-scripts/tingbok_push.py found-item.yaml            # dry run
-scripts/tingbok_push.py found-item.yaml --commit   # actually PUT
+tingbok-push found-item.yaml            # dry run
+tingbok-push found-item.yaml --commit   # actually PUT
 ```
 An item with no `receipt_name`/`price` pushes only name/categories/quantity (no
 empty receipt or price rows). Drop in `receipt_name`, `price` and `unit` if you do
@@ -307,8 +307,8 @@ have a receipt.
 
 Curate a YAML and run `off_upload.py` (dry run first, then `--commit`):
 ```bash
-scripts/off_upload.py --products off-products.yaml            # dry run
-scripts/off_upload.py --products off-products.yaml --commit   # writes to OFF
+off-upload --products off-products.yaml            # dry run
+off-upload --products off-products.yaml --commit   # writes to OFF
 ```
 ```yaml
 products:

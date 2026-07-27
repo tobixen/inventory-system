@@ -4,7 +4,7 @@
   `inventory-md add CONTAINER --category … [--id … --ean … --bb … …] NAME`
   appends a validated line under a container `ID:`, folding the QA work (dup-ID,
   food-bb, category resolution) into the write step; `--id` auto-generates a
-  readable id (category leaf + date for food). `scripts/inventory_import.py`
+  readable id (category leaf + date for food). `inventory_import` (moved to purchase-pipeline; the `staging-to-inventory` command)
   applies it across a whole reviewed staging file in one pass (import
   `inventory_md.additem`, no CLI shell-out), so process-shopping Stage 3 no
   longer hand-edits `inventory.md`. See `docs/ADDING-ITEMS.md`.
