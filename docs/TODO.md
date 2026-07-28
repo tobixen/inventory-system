@@ -75,9 +75,27 @@ we cannot tell a torn quiet zone from blur — but silence was the worst answer,
 since the photo then looked like one that simply had no barcode.
 
 Still open, found while measuring this: **the undecoded-barcode heuristic fires
-on 15 of 47 photos.** Some are real (both diving-mask shots, the vanilla sachet's
-companion photo), but the rate wants a look before it becomes noise the reviewer
-learns to skip. Tighten the thresholds (`_STRIPE_*`) against a labelled sample.
+on 15 of 47 photos**, and a hand-labelled sample of 6 came out roughly half
+false. True positives: both diving-mask shots, and `IMG_20260715_123241.jpg` — a
+blurred sideways yoghurt label whose `3800207823016` is legible to a human and
+invisible to zbar, exactly the case the flag exists for. False positives:
+`IMG_20260710_162936.jpg` (a charcoal bag whose artwork has decorative vertical
+stripes) and `IMG_20260724_174109.jpg` (a Billa receipt — the `#####` separator
+rows are as vertically coherent as any barcode). Every shopping trip photographs
+a receipt, so that one fires every time.
+
+What the heuristic actually separates is "busy striped region" from "blank or
+plain", not "barcode" from "other striped things".
+
+**Negative result, don't retry:** periodicity of the run lengths does not
+discriminate. Barcode bars were expected to be aperiodic (widths 1–4 modules) and
+`#####` rows regular, but measured over the labelled sample the modal-run
+fraction (0.21–0.32 barcode vs 0.21–0.57 noise), distinct-run count (11–13 vs
+8–12) and mean run width (3.5–5.6 vs 2.5–5.2) all overlap; the charcoal bag is
+statistically indistinguishable from the real barcode. A useful discriminator
+probably has to be structural rather than statistical — look for the EAN guard
+pattern (`101` … `01010` … `101`) at a plausible module width, which is what
+actually makes a barcode a barcode.
 
 ### ~~`inventory-md ean EAN` — ad-hoc barcode lookup~~
 
