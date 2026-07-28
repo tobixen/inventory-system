@@ -14,7 +14,7 @@ from pathlib import Path
 
 import argcomplete
 
-from . import additem, edititem, moveitem, parser, queries, shopping_list, vocabulary
+from . import additem, barcodes, edititem, moveitem, parser, queries, shopping_list, vocabulary
 from ._version import __version__
 from .config import Config, load_config
 
@@ -1148,6 +1148,32 @@ Examples:
         "--file", type=Path, dest="file", help="inventory.md to edit (default: configured or ./inventory.md)"
     )
 
+    # Ean command — ad-hoc barcode lookup
+    ean_parser = subparsers.add_parser(
+        "ean",
+        help="Look up a product barcode in the inventory and in tingbok",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Answers "what is this barcode, and do I already have one?" without a raw HTTP
+call — which is a permission prompt in an otherwise unattended shopping run,
+and one more hostname to remember. Local inventory first, then tingbok.
+
+Matching ignores separators and the shop-name prefix on shop-local article
+numbers, so 40853712 also finds lidl-40853712.
+
+Exit status is 1 when a barcode is known neither locally nor to tingbok.
+
+Examples:
+  inventory-md ean 5941132002140
+  inventory-md ean 5941132002140 8680041405983 --json
+  inventory-md ean 5941132002140 --no-tingbok      # offline, inventory only
+        """,
+    )
+    ean_parser.add_argument("eans", nargs="+", metavar="EAN", help="Barcode(s) to look up")
+    ean_parser.add_argument("--directory", "-d", type=Path, help="Inventory directory (default: current)")
+    ean_parser.add_argument("--json", "-j", action="store_true", help="Output as JSON")
+    ean_parser.add_argument("--no-tingbok", action="store_true", help="Skip the tingbok lookup (inventory only)")
+
     # Update-template command
     update_parser = subparsers.add_parser("update-template", help="Update search.html to latest version")
     update_parser.add_argument("directory", type=Path, nargs="?", help="Target directory (default: current directory)")
@@ -1414,6 +1440,8 @@ Examples:
             args.container_id,
             include_children=not args.no_children,
         )
+    elif args.command == "ean":
+        return ean_command(args, config)
     elif args.command == "add":
         return add_item_command(args, config)
     elif args.command == "edit":
@@ -1684,6 +1712,82 @@ def _vocabulary_search_command(args, config: Config, directory: Path) -> int:
             print(f"  {m.item_id or '?':20} {m.description}{qty_str}{loc_str}")
 
     return 0
+
+
+def _ean_lookup(
+    ean: str,
+    inventory_json: Path,
+    config: Config,
+    use_tingbok: bool,
+) -> dict:
+    """Resolve one barcode: local inventory items first, then the tingbok record."""
+    # Shop-local article numbers are not GTINs and have no check digit; only
+    # validate what claims to be one.
+    if ean.isdigit() and not barcodes.validate_ean_checksum(ean):
+        print(f"Warning: {ean} has an invalid EAN/UPC checksum — mistyped?", file=sys.stderr)
+
+    items = queries.find_by_ean(inventory_json, ean) if inventory_json.exists() else []
+
+    product = None
+    if use_tingbok and config.tingbok_url:
+        cache_dir = Path.home() / ".cache" / "inventory-md" / "tingbok"
+        try:
+            product = vocabulary.lookup_ean_via_tingbok(ean, config.tingbok_url, cache_dir=cache_dir)
+        except Exception as e:  # network/DNS/service trouble must not lose the local answer
+            print(f"Warning: tingbok lookup failed for {ean}: {e}", file=sys.stderr)
+
+    return {"ean": ean, "items": items, "product": product}
+
+
+def _render_ean_lookup(entry: dict) -> str:
+    """Render one :func:`_ean_lookup` result."""
+    lines = [f"EAN {entry['ean']}"]
+
+    items = entry["items"]
+    if items:
+        lines.append(f"  Inventory: {len(items)} item(s)")
+        for item in items:
+            loc = f"  @ {item['location']}" if item["location"] else ""
+            lines.append(f"    {item['id'] or '?':24} {item['name']}{loc}")
+            lines.append(f"    {'':24} {queries.bb_status(item['bb'])}")
+    else:
+        lines.append("  Inventory: no match")
+
+    product = entry["product"]
+    if product:
+        lines.append(f"  tingbok: {product.get('name') or '(unnamed)'}")
+        for label, key in (("Brand", "brand"), ("Quantity", "quantity"), ("Categories", "categories")):
+            value = product.get(key)
+            if not value:
+                continue
+            if isinstance(value, list):
+                value = ", ".join(str(v) for v in value)
+            lines.append(f"    {label}: {value}")
+    else:
+        lines.append("  tingbok: not found")
+
+    return "\n".join(lines)
+
+
+def ean_command(args, config: Config) -> int:
+    """Implement ``inventory-md ean``.
+
+    Returns 1 if any requested barcode was known neither locally nor to
+    tingbok — a miss the caller has to act on, e.g. by reading the digits off
+    the label again.
+    """
+    directory = Path(args.directory).resolve() if getattr(args, "directory", None) else Path.cwd()
+    inventory_json = directory / "inventory.json"
+    use_tingbok = not getattr(args, "no_tingbok", False)
+
+    entries = [_ean_lookup(ean, inventory_json, config, use_tingbok) for ean in args.eans]
+
+    if getattr(args, "json", False):
+        print(json.dumps(entries, indent=2, ensure_ascii=False))
+    else:
+        print("\n\n".join(_render_ean_lookup(e) for e in entries))
+
+    return 1 if any(not e["items"] and not e["product"] for e in entries) else 0
 
 
 def _load_local_vocab(directory: Path) -> dict:

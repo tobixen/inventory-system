@@ -23,7 +23,25 @@ Options:
     --json          Output as JSON
     --out PATH      Write output to PATH instead of stdout (avoids a shell
                     `>` redirect, which breaks Bash allowlist prefix-matching)
+    --no-corroborate      Scan each image once instead of corroborating a read
+                          across rescaled variants (faster, misdecode-prone)
+    --no-scan-undecoded   Don't check barcode-less images for a barcode that
+                          is present but unreadable
     -h, --help      Show this help message
+
+Misdecode handling:
+    A valid check digit is not evidence of a correct read — an EAN-13 parity
+    misdecode recomputes the checksum over the corrupted digits.  Each image is
+    therefore decoded several ways (see DECODE_VARIANTS), and reads landing on
+    the same spot in the photo are candidates for one symbol.  A winner is
+    picked by GS1 prefix plausibility, then by "which one resolves to a known
+    product", then by corroboration with a clear margin.
+
+    A losing read is only discarded when something explains it as a misread of
+    the winner (see _explains_misdecode) — sharing a place in the photo is not
+    proof, since a small sticker can sit on a big label.  Anything else, and the
+    photo is emitted as a single `tag:TODO` review block listing every
+    candidate, rather than as several equally plausible item lines.
 
 Supported barcodes:
     - EAN-13, EAN-8, UPC-A, UPC-E (products) -> tingbok.plann.no
@@ -63,7 +81,13 @@ try:
 except ImportError:
     try:
         import requests
+
+        # Without this the name stays unbound on the niquests-missing /
+        # requests-present install, and every later `if HAS_REQUESTS` is a
+        # NameError rather than a graceful degradation.
+        HAS_REQUESTS = True
     except ImportError:
+        requests = None
         HAS_REQUESTS = False
 
 try:
@@ -87,6 +111,16 @@ try:
 except ImportError:  # pragma: no cover
     extract_best_before = None
 
+# Checksum and confusability arithmetic lives in the package so `inventory-md
+# ean` and check_quality can share it. Re-exported here for callers (and tests)
+# that only import this script.
+from inventory_md.barcodes import (  # noqa: E402  (kept next to its sibling import)
+    is_parity_confusable,
+    is_restricted_gs1_prefix,
+    validate_ean_checksum,
+    validate_upce_checksum,
+)
+
 
 def load_cache(cache_path: Path) -> dict:
     """Load the local EAN cache."""
@@ -108,34 +142,378 @@ def save_cache(cache: dict, cache_path: Path):
         print(f"Warning: Could not save cache: {e}", file=sys.stderr)
 
 
-def extract_barcodes(image_path: Path) -> list[dict]:
+# Decoding the same photo more than once, differently, is how we tell a real
+# read from a misdecode.  zbar's own uncertainty threshold is not reachable
+# through pyzbar (it only sets ZBAR_CFG_ENABLE), so we corroborate at this
+# level instead: rescaling re-quantises the bar widths and autocontrast changes
+# the binarisation threshold, so a read that survived a bar-width error at one
+# scale is unlikely to reproduce at another.  A code seen in only one variant
+# is weak evidence.
+DECODE_VARIANTS = ("original", "scale-0.6", "autocontrast")
+
+
+_VARIANT_SCALE = 0.6
+
+
+def _decode_variants(image: "Image.Image") -> list[tuple["Image.Image", float]]:
+    """Return ``(image, scale)`` pairs for the renderings :func:`extract_barcodes` scans.
+
+    ``scale`` maps a coordinate in the variant back to the original image, so
+    every read can be located in one shared coordinate system.
+    """
+    from PIL import ImageOps
+
+    base = ImageOps.exif_transpose(image)
+    w, h = base.size
+    small = base.resize((max(1, int(w * _VARIANT_SCALE)), max(1, int(h * _VARIANT_SCALE))), Image.LANCZOS)
+    return [
+        (base, 1.0),
+        (small, _VARIANT_SCALE),
+        (ImageOps.autocontrast(base.convert("L")), 1.0),
+    ]
+
+
+def extract_barcodes(image_path: Path, corroborate: bool = True) -> list[dict]:
     """
     Extract all barcodes and QR codes from an image.
 
-    Returns list of dicts with: type, data, polygon
+    Returns list of dicts with: type, data, polygon, bbox, corroboration, variants.
+
+    ``bbox`` is ``(left, top, right, bottom)`` in the original image's
+    coordinates — where in the photo the code was read — and ``corroboration``
+    is how many of the ``variants`` decode passes produced this exact code.
+    :func:`resolve_candidates` uses both to pick between conflicting reads.
+    With ``corroborate=False`` the image is scanned once (faster, but every code
+    then looks equally trustworthy).
     """
     if not HAS_BARCODE_DEPS:
         raise RuntimeError("Barcode scanning requires pyzbar and pillow (pip install pyzbar pillow)")
     try:
         image = Image.open(image_path)
+        image.load()
     except Exception as e:
         print(f"Error reading {image_path}: {e}", file=sys.stderr)
         return []
 
-    # Decode all barcode types
-    decoded = decode(image)
+    from PIL import ImageOps
+
+    variants = _decode_variants(image) if corroborate else [(ImageOps.exif_transpose(image), 1.0)]
+
+    # Corroboration counts *variants that agreed*, not decoded occurrences: two
+    # copies of the same product in one frame are one variant agreeing twice,
+    # and counting them twice would make "3 of 3 decode passes" a lie and break
+    # the margin rule that rests on it.
+    seen_in: dict[tuple[str, str], set[int]] = {}
+    found: dict[tuple[str, str], dict] = {}
+    for index, (variant, scale) in enumerate(variants):
+        for barcode in decode(variant):
+            key = (barcode.type, barcode.data.decode("utf-8"))
+            seen_in.setdefault(key, set()).add(index)
+            if key in found:
+                continue
+            # Polygons are reported verbatim only for the original image; a
+            # rescaled read still contributes its location, mapped back.
+            polygon = None
+            bbox = None
+            if barcode.polygon:
+                xs = [p.x / scale for p in barcode.polygon]
+                ys = [p.y / scale for p in barcode.polygon]
+                bbox = (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
+                if index == 0:
+                    polygon = [(p.x, p.y) for p in barcode.polygon]
+            found[key] = {
+                "type": key[0],  # EAN13, EAN8, UPCA, QRCODE, CODE128, etc.
+                "data": key[1],
+                "polygon": polygon,
+                "bbox": bbox,
+            }
 
     results = []
-    for barcode in decoded:
-        results.append(
-            {
-                "type": barcode.type,  # EAN13, EAN8, UPCA, QRCODE, CODE128, etc.
-                "data": barcode.data.decode("utf-8"),
-                "polygon": [(p.x, p.y) for p in barcode.polygon] if barcode.polygon else None,
-            }
-        )
+    for key, entry in found.items():
+        entry["corroboration"] = len(seen_in[key])
+        entry["variants"] = len(variants)
+        results.append(entry)
 
     return results
+
+
+def bbox_overlap_fraction(a: tuple | None, b: tuple | None) -> float:
+    """Overlap of two ``(left, top, right, bottom)`` boxes, over the smaller area.
+
+    Over the *smaller* area rather than the union, because a misdecode is often
+    read from a subset of the symbol's scanlines and so gets a box nested inside
+    the good read's.  Returns 0.0 when either box is missing or degenerate.
+    """
+    if not a or not b:
+        return 0.0
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    area_a = (ax1 - ax0) * (ay1 - ay0)
+    area_b = (bx1 - bx0) * (by1 - by0)
+    if area_a <= 0 or area_b <= 0:
+        return 0.0
+    overlap_w = min(ax1, bx1) - max(ax0, bx0)
+    overlap_h = min(ay1, by1) - max(ay0, by0)
+    if overlap_w <= 0 or overlap_h <= 0:
+        return 0.0
+    return (overlap_w * overlap_h) / min(area_a, area_b)
+
+
+# Two reads whose boxes overlap this much are reads of one physical symbol.
+_SAME_SYMBOL_OVERLAP = 0.5
+
+
+def _same_symbol(a: dict, b: dict) -> bool:
+    """Return True if two candidates look like reads of the same barcode.
+
+    Location is the primary evidence: reads of one symbol land in one place, and
+    two symbols in a shelf photo do not.  It also catches misdecodes the digits
+    cannot — a corrupted *right* half leaves no parity signature, which is how
+    3800874988780 slipped past as a third peer read of the sausage label.  When a
+    box is missing (a code that decoded without a polygon), fall back to the
+    digit signature.
+    """
+    if a.get("bbox") and b.get("bbox"):
+        return bbox_overlap_fraction(a["bbox"], b["bbox"]) >= _SAME_SYMBOL_OVERLAP
+    return is_parity_confusable(a["data"], b["data"])
+
+
+def _confusable_groups(candidates: list[dict]) -> list[list[dict]]:
+    """Partition candidates into connected groups of same-symbol reads.
+
+    Proper connected components, not "join the first group that matches" —
+    overlap is not transitive, so a wide box bridging two disjoint ones has to
+    merge all three regardless of the order they arrive in.  The old loop never
+    merged existing groups, which made the result depend on input order.
+    """
+    parent = list(range(len(candidates)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(candidates)):
+        for j in range(i + 1, len(candidates)):
+            if _same_symbol(candidates[i], candidates[j]):
+                parent[find(i)] = find(j)
+
+    groups: dict[int, list[dict]] = {}
+    for i, candidate in enumerate(candidates):
+        groups.setdefault(find(i), []).append(candidate)
+    return list(groups.values())
+
+
+# How much better-corroborated a candidate must be before corroboration alone
+# decides a conflict.  On IMG_20260715_123606.jpg the phantom 3200274928780 beat
+# the real 3800214928780 by 3 reads to 2 — a majority, and wrong.  So a bare
+# majority is not enough: require a clean sweep (with three variants, 3-vs-1).
+_CORROBORATION_MARGIN = 2
+
+
+def _explains_misdecode(loser: str, winner: str, resolves) -> bool:
+    """Return True if ``loser`` is accounted for as a bad read of ``winner``.
+
+    Sharing a place in the photo makes two codes *candidates* for one symbol; it
+    does not prove it, because a small sticker can sit on a big label.  One of
+    these has to hold before a loser is dropped rather than flagged:
+
+    * the parity signature — same length, identical right half, which is what an
+      EAN-13 left-half misdecode looks like;
+    * a restricted-distribution GS1 prefix, which a retail pack never carries;
+    * the winner resolves to a known product and the loser resolves to nothing,
+      the case of a right-half misdecode that leaves no parity signature.
+    """
+    return (
+        is_parity_confusable(loser, winner)
+        or is_restricted_gs1_prefix(loser)
+        or (resolves(winner) and not resolves(loser))
+    )
+
+
+def _resolve_group(members: list[dict], candidates: list[dict], resolver) -> None:
+    """Decide a single confusable group, annotating ``candidates`` in place.
+
+    Evidence in decreasing order of trustworthiness:
+
+    1. **GS1 prefix.** Exactly one candidate whose prefix a retail pack could
+       carry — free, offline, and unaffected by what any database happens to
+       know.
+    2. **Product resolution.** Exactly one candidate that ``resolver`` knows.
+       Strong, but it costs a lookup and a database can be contaminated by an
+       earlier run that pushed a phantom back to it.
+    3. **Corroboration**, and only by a clean margin. It is the weakest signal:
+       a misdecode that reproduces at one scale tends to reproduce at the next.
+
+    If none of them settles it, nobody wins and the caller gets a review flag.
+    """
+    # Deterministic order: best corroborated first, then lexical.
+    members = sorted(members, key=lambda c: (-c["corroboration"], c["data"]))
+    datas = sorted(c["data"] for c in members)
+
+    # A lone candidate is never checked against a product database (see
+    # resolve_candidates), and within a group each code is asked about at most
+    # once. A resolver that raises reports a network fault, not a verdict: it
+    # must not abort a batch scan that has already read dozens of photos.
+    verdicts: dict[str, bool] = {}
+
+    def resolves(code: str) -> bool:
+        if code not in verdicts:
+            if resolver is None:
+                verdicts[code] = False
+            else:
+                try:
+                    verdicts[code] = bool(resolver(code))
+                except Exception as e:  # noqa: BLE001 — any lookup failure means "unknown"
+                    print(f"Warning: product lookup failed for {code}: {e}", file=sys.stderr)
+                    verdicts[code] = False
+        return verdicts[code]
+
+    winner = None
+    why = ""
+    plausible = [c for c in members if not is_restricted_gs1_prefix(c["data"])]
+    if len(plausible) == 1:
+        winner = plausible[0]
+        others = ", ".join(d for d in datas if d != winner["data"])
+        why = f"the only candidate whose GS1 prefix a retail pack can carry; {others} is restricted-distribution"
+    else:
+        resolved = [c for c in members if resolves(c["data"])]
+        if len(resolved) == 1:
+            winner = resolved[0]
+            why = "the only candidate that resolves to a known product"
+
+    if winner is None and members[0]["corroboration"] - members[1]["corroboration"] >= _CORROBORATION_MARGIN:
+        winner = members[0]
+        why = f"{winner['corroboration']} of {winner.get('variants', 1)} decode passes agreed"
+
+    # Winning is not enough to delete the others. Reads are grouped by where they
+    # sit in the photo, and two *different* products can share that space — a
+    # small sticker on a big label, one package lying over another. Discard a
+    # loser only when something actually explains it as a misread of the winner;
+    # otherwise the group is ambiguous and a human has to look, because the
+    # alternative is deleting a real product from the output.
+    if winner is not None:
+        unexplained = [d for d in datas if d != winner["data"] and not _explains_misdecode(d, winner["data"], resolves)]
+        if unexplained:
+            winner = None
+
+    if winner is not None:
+        losers = [d for d in datas if d != winner["data"]]
+        for candidate in candidates:
+            if candidate["data"] == winner["data"]:
+                candidate["status"] = "ok"
+                candidate["discarded"] = losers
+            elif candidate["data"] in datas:
+                candidate["status"] = "rejected"
+                candidate["status_reason"] = f"conflicts with {winner['data']} ({why})"
+        return
+
+    representative = members[0]["data"]
+    for candidate in candidates:
+        if candidate["data"] == representative:
+            candidate["status"] = "needs_review"
+            candidate["alternatives"] = datas
+            candidate["status_reason"] = "conflicting barcode reads; cannot tell which one is the misdecode"
+        elif candidate["data"] in datas:
+            candidate["status"] = "rejected"
+            candidate["status_reason"] = f"reported as an alternative under {representative}"
+
+
+def resolve_candidates(candidates: list[dict], resolver=None) -> list[dict]:
+    """Annotate one image's barcode candidates with a ``status``.
+
+    ``status`` is ``ok`` (use it), ``needs_review`` (the caller must look) or
+    ``rejected`` (a losing read, kept only so ``--json`` shows what happened).
+
+    Two codes are treated as conflicting only when they are parity-confusable
+    (:func:`is_parity_confusable`) — a photo of a shelf with several different
+    products is not a conflict and stays untouched.  A conflict is decided by
+    corroboration first, and only if that ties by ``resolver(code)``, an
+    optional callable returning a product record or ``None``.
+
+    Returns new dicts; the input is not modified.
+    """
+    annotated = [dict(c) for c in candidates]
+    for candidate in annotated:
+        candidate.setdefault("corroboration", 1)
+        candidate["status"] = "ok"
+
+    # Only product codes can be parity-misdecoded; QR/CODE128 payloads pass through.
+    best_per_code: dict[str, dict] = {}
+    for candidate in annotated:
+        if not is_lookupable(candidate["type"], candidate["data"])[0]:
+            continue
+        previous = best_per_code.get(candidate["data"])
+        if previous is None or candidate["corroboration"] > previous["corroboration"]:
+            best_per_code[candidate["data"]] = candidate
+
+    if len(best_per_code) < 2:
+        return annotated
+
+    for group in _confusable_groups([best_per_code[d] for d in sorted(best_per_code)]):
+        if len(group) > 1:
+            _resolve_group(group, annotated, resolver)
+
+    return annotated
+
+
+# Thresholds for the "there is a barcode here I could not read" heuristic.
+# A barcode band is (a) busy along each row and (b) near-identical from one row
+# to the next, because the bars run the full height of the symbol. Text is busy
+# too, but loses that vertical coherence every few rows.
+_STRIPE_MIN_TRANSITIONS = 20
+_STRIPE_MIN_ROWS = 20
+_STRIPE_ROW_AGREEMENT = 0.9
+_STRIPE_ANALYSIS_SIZE = 512
+
+
+def looks_like_undecoded_barcode(image_path: Path) -> bool:
+    """Return True if the image seems to contain a barcode that zbar did not read.
+
+    Motivating specimen: a diving-mask label torn straight through the right-hand
+    quiet zone (which zbar requires), with a striated thermal print texture.  The
+    digits are plainly legible to a human and zbar returns nothing at all — no
+    amount of crop/rotation retrying helps.  Silence is the worst possible
+    answer there, because the photo then looks like it simply had no barcode.
+
+    This detects *presence*, not the specific defect: a hit means "damaged,
+    occluded, blurred, or missing quiet zone — go look", not "quiet zone torn".
+    """
+    if not HAS_BARCODE_DEPS:
+        return False
+    try:
+        from PIL import ImageOps
+
+        img = ImageOps.exif_transpose(Image.open(image_path)).convert("L")
+    except Exception:
+        return False
+
+    img.thumbnail((_STRIPE_ANALYSIS_SIZE, _STRIPE_ANALYSIS_SIZE))
+    width, height = img.size
+    if width < 40 or height < _STRIPE_MIN_ROWS:
+        return False
+
+    pixels = ImageOps.autocontrast(img).load()
+
+    run = 0
+    previous: list[int] | None = None
+    for y in range(height):
+        row = [1 if pixels[x, y] > 127 else 0 for x in range(width)]
+        transitions = sum(1 for x in range(1, width) if row[x] != row[x - 1])
+        if transitions < _STRIPE_MIN_TRANSITIONS:
+            run, previous = 0, None
+            continue
+        if previous is None:
+            run = 1
+        else:
+            agreement = sum(1 for x in range(width) if row[x] == previous[x]) / width
+            run = run + 1 if agreement >= _STRIPE_ROW_AGREEMENT else 1
+        if run >= _STRIPE_MIN_ROWS:
+            return True
+        previous = row
+
+    return False
 
 
 def get_ocr_reader(languages: list[str] | None = None) -> "easyocr.Reader | None":
@@ -592,33 +970,6 @@ def lookup_ean(ean: str, cache: dict, use_cache: bool = True) -> tuple[dict | No
     return lookup_code(ean, cache, use_cache)
 
 
-def validate_ean_checksum(ean: str) -> bool:
-    """Validate EAN/UPC check digit."""
-    if not ean.isdigit():
-        return False
-    if len(ean) not in (8, 12, 13):
-        return False
-
-    # EAN-13/UPC-A checksum algorithm
-    digits = [int(d) for d in ean]
-    if len(ean) == 13:
-        # EAN-13: odd positions * 1, even positions * 3
-        total = sum(d * (1 if i % 2 == 0 else 3) for i, d in enumerate(digits[:-1]))
-        check = (10 - (total % 10)) % 10
-        return check == digits[-1]
-    elif len(ean) == 12:
-        # UPC-A: odd positions * 3, even positions * 1
-        total = sum(d * (3 if i % 2 == 0 else 1) for i, d in enumerate(digits[:-1]))
-        check = (10 - (total % 10)) % 10
-        return check == digits[-1]
-    elif len(ean) == 8:
-        # EAN-8: same as EAN-13
-        total = sum(d * (3 if i % 2 == 0 else 1) for i, d in enumerate(digits[:-1]))
-        check = (10 - (total % 10)) % 10
-        return check == digits[-1]
-    return False
-
-
 def is_lookupable(barcode_type: str, data: str) -> tuple[bool, str]:
     """
     Check if barcode can be looked up online.
@@ -633,15 +984,23 @@ def is_lookupable(barcode_type: str, data: str) -> tuple[bool, str]:
     if len(normalized) == 10 and validate_isbn10_checksum(normalized):
         return True, "isbn"
 
+    # UPC-E's check digit covers the *expanded* UPC-A, not the eight characters
+    # as printed, so EAN-8 arithmetic rejects genuine reads.
+    if barcode_type == "UPCE":
+        if not validate_upce_checksum(data):
+            print(f"Warning: Invalid checksum for {data}", file=sys.stderr)
+            return False, ""
+        return True, "ean"
+
     # Check for EAN/UPC
-    if barcode_type in ("EAN13", "EAN8", "UPCA", "UPCE"):
+    if barcode_type in ("EAN13", "EAN8", "UPCA"):
         if not validate_ean_checksum(data):
             print(f"Warning: Invalid checksum for {data}", file=sys.stderr)
             return False, ""
         return True, "ean"
 
     # Some barcodes encode EANs as other types
-    if barcode_type == "CODE128" and data.isdigit() and len(data) in (8, 12, 13):
+    if barcode_type == "CODE128" and data.isascii() and data.isdigit() and len(data) in (8, 12, 13):
         if not validate_ean_checksum(data):
             print(f"Warning: Invalid checksum for {data}", file=sys.stderr)
             return False, ""
@@ -699,12 +1058,41 @@ def format_for_inventory(barcode: dict, product: dict | None) -> str:
                 parts.append(f"({quantity})")
 
             desc = " ".join(parts)
-            return f"* EAN:{code} {desc}"
+            line = f"* EAN:{code} {desc}"
     else:
         # Check if it's an ISBN
         if is_isbn(code):
-            return f"* tag:book ISBN:{normalize_isbn(code)} (unknown book)"
-        return f"* EAN:{code} (unknown product, type: {barcode_type})"
+            line = f"* tag:book ISBN:{normalize_isbn(code)} (unknown book)"
+        else:
+            line = f"* EAN:{code} (unknown product, type: {barcode_type})"
+
+    discarded = barcode.get("discarded")
+    if discarded:
+        line += f"\n    # Discarded conflicting read(s): {', '.join(discarded)}"
+    return line
+
+
+def format_flagged(result: dict) -> str:
+    """Format a candidate the caller has to look at, as a single tag:TODO block.
+
+    Conflicting reads are deliberately *not* emitted as peer item lines: two
+    plausible-looking EANs side by side invite picking the wrong one, since
+    both carry a valid check digit.
+    """
+    if result.get("type") == "NO_DECODE":
+        return (
+            "* tag:TODO (barcode-like pattern detected, but nothing decoded)\n"
+            "    # The code may be torn, occluded, blurred, or missing the quiet\n"
+            "    # zone zbar needs. Read the digits by hand, then: inventory-md ean EAN"
+        )
+
+    alternatives = result.get("alternatives") or [result["data"]]
+    return (
+        f"* tag:TODO EAN:{result['data']} (needs review — conflicting barcode reads)\n"
+        f"    # Candidates: {', '.join(alternatives)}\n"
+        "    # Identical right half, different left half: an EAN-13 parity misdecode\n"
+        "    # recomputes the check digit, so every candidate here looks valid."
+    )
 
 
 def main():
@@ -732,6 +1120,16 @@ def main():
         "--best-before", "--bb", dest="bb_mode", action="store_true", help="Extract best-before dates (implies --ocr)"
     )
     parser.add_argument("--lookup", metavar="CODE", help="Look up a single EAN/ISBN")
+    parser.add_argument(
+        "--no-corroborate",
+        action="store_true",
+        help="Scan each image once instead of corroborating across rescaled variants (faster, misdecode-prone)",
+    )
+    parser.add_argument(
+        "--no-scan-undecoded",
+        action="store_true",
+        help="Don't check barcode-less images for an unreadable barcode",
+    )
     ns = parser.parse_args()
 
     do_lookup = not ns.no_lookup
@@ -815,7 +1213,14 @@ def main():
 
         barcodes = []
         if not ocr_only:
-            barcodes = extract_barcodes(image_path)
+            barcodes = extract_barcodes(image_path, corroborate=not ns.no_corroborate)
+            # Resolve conflicting reads before anything downstream trusts them.
+            # The resolver is a tie-breaker of last resort, so it is only wired
+            # up when lookups are enabled at all.
+            resolver = None
+            if do_lookup and HAS_REQUESTS:
+                resolver = lambda code: lookup_code(code, cache, use_cache)[0]  # noqa: E731
+            barcodes = resolve_candidates(barcodes, resolver=resolver)
 
         image_results: list[dict] = []
         ocr_results: list[dict] | None = None
@@ -846,10 +1251,17 @@ def main():
                     "type": barcode["type"],
                     "data": barcode["data"],
                     "product": None,
+                    "status": barcode.get("status", "ok"),
+                    "corroboration": barcode.get("corroboration"),
+                    "variants": barcode.get("variants"),
                 }
+                for key in ("status_reason", "alternatives", "discarded"):
+                    if barcode.get(key):
+                        result[key] = barcode[key]
 
-                # Look up EANs (always via tingbok, no local caching)
-                if do_lookup and is_ean(barcode["type"], barcode["data"]):
+                # Look up EANs (always via tingbok, no local caching). Losing
+                # reads are kept for --json but not looked up or reported.
+                if do_lookup and result["status"] == "ok" and is_ean(barcode["type"], barcode["data"]):
                     ean = barcode["data"]
                     product, was_cached = lookup_ean(ean, cache, use_cache)
                     result["product"] = product
@@ -860,6 +1272,20 @@ def main():
                         cache_modified = True
 
                 image_results.append(result)
+
+        if not barcodes and not ocr_only and not ns.no_scan_undecoded and looks_like_undecoded_barcode(image_path):
+            # Don't let a photo whose barcode is torn or blurred pass as a photo
+            # that simply had no barcode.
+            image_results.append(
+                {
+                    "file": str(image_path),
+                    "type": "NO_DECODE",
+                    "data": "",
+                    "product": None,
+                    "status": "needs_review",
+                    "status_reason": "barcode-like pattern present, but nothing decoded",
+                }
+            )
 
         # Best-before pass: the date is usually on the SAME photo as the barcode,
         # so OCR runs here even for barcode images (where the OCR fallback above
@@ -892,6 +1318,17 @@ def main():
             for result in all_results:
                 data = result["data"]
 
+                # Losing reads of a conflict are reported under the winner (or
+                # under the needs-review block), never as an item of their own.
+                if result.get("status") == "rejected":
+                    continue
+
+                if result["type"] == "NO_DECODE" or result.get("status") == "needs_review":
+                    print(format_flagged(result), file=out_stream)
+                    print(f"    # Found in: {result['file']}", file=out_stream)
+                    print(file=out_stream)
+                    continue
+
                 # Handle OCR results differently
                 if result["type"] == "OCR":
                     print("* tag:TODO (OCR detected text)", file=out_stream)
@@ -907,7 +1344,7 @@ def main():
                     continue
                 seen_eans.add(data)
 
-                barcode = {"type": result["type"], "data": data}
+                barcode = {"type": result["type"], "data": data, "discarded": result.get("discarded")}
                 print(format_for_inventory(barcode, result.get("product")), file=out_stream)
                 print(f"    # Found in: {result['file']}", file=out_stream)
                 print(file=out_stream)

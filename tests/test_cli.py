@@ -1013,3 +1013,123 @@ class TestEditCommand:
         rc = cli.main(["edit", "wd40", "--file", str(md)])
         assert rc == 1
         assert md.read_text(encoding="utf-8") == self._MD
+
+
+class TestEanCommand:
+    """Tests for 'inventory-md ean EAN' — ad-hoc barcode lookup.
+
+    Replaces the raw `curl https://tingbok.plann.no/api/ean/{ean}` that the
+    shopping flow otherwise needs (a permission prompt in an unattended run,
+    and a hostname the agent has to remember).
+    """
+
+    @staticmethod
+    def _inventory(directory: Path) -> Path:
+        inv = {
+            "containers": [
+                {
+                    "id": "pantry",
+                    "parent": "kitchen",
+                    "items": [
+                        {
+                            "id": "vanilla-sugar",
+                            "name": "Dr. Oetker vanillasukker",
+                            "metadata": {"id": "vanilla-sugar", "ean": "5941132002140", "bb": "2027-01-31"},
+                        }
+                    ],
+                }
+            ]
+        }
+        path = directory / "inventory.json"
+        path.write_text(json.dumps(inv), encoding="utf-8")
+        return path
+
+    def test_reports_local_inventory_hit(self, tmp_path, capsys):
+        self._inventory(tmp_path)
+        with patch("inventory_md.vocabulary.lookup_ean_via_tingbok", return_value=None):
+            rc = cli.main(["ean", "5941132002140", "-d", str(tmp_path)])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "vanilla-sugar" in out
+        assert "pantry" in out
+
+    def test_reports_tingbok_product(self, tmp_path, capsys):
+        self._inventory(tmp_path)
+        product = {
+            "ean": "5941132002140",
+            "name": "Zahar vanilinat",
+            "brand": "Dr. Oetker",
+            "quantity": "8 g",
+            "categories": ["food/sugar"],
+        }
+        with patch("inventory_md.vocabulary.lookup_ean_via_tingbok", return_value=product) as m:
+            rc = cli.main(["ean", "5941132002140", "-d", str(tmp_path)])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "Zahar vanilinat" in out
+        assert "Dr. Oetker" in out
+        assert m.call_args[0][0] == "5941132002140"
+
+    def test_unknown_ean_exits_nonzero(self, tmp_path, capsys):
+        self._inventory(tmp_path)
+        with patch("inventory_md.vocabulary.lookup_ean_via_tingbok", return_value=None):
+            rc = cli.main(["ean", "8680041405983", "-d", str(tmp_path)])
+        out = capsys.readouterr().out
+        # Nothing known locally and nothing in tingbok — a miss the caller must act on.
+        assert rc == 1
+        assert "not found" in out.lower()
+
+    def test_local_hit_alone_is_success(self, tmp_path, capsys):
+        """A known item with tingbok offline is still a useful answer."""
+        self._inventory(tmp_path)
+        with patch("inventory_md.vocabulary.lookup_ean_via_tingbok", return_value=None):
+            rc = cli.main(["ean", "5941132002140", "-d", str(tmp_path)])
+        assert rc == 0
+
+    def test_works_without_inventory_json(self, tmp_path, capsys):
+        """The lookup must not require being run inside an inventory directory."""
+        product = {"ean": "5941132002140", "name": "Zahar vanilinat", "brand": "Dr. Oetker"}
+        with patch("inventory_md.vocabulary.lookup_ean_via_tingbok", return_value=product):
+            rc = cli.main(["ean", "5941132002140", "-d", str(tmp_path)])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "Zahar vanilinat" in out
+
+    def test_multiple_eans_in_one_call(self, tmp_path, capsys):
+        self._inventory(tmp_path)
+        products = {
+            "5941132002140": {"ean": "5941132002140", "name": "Zahar vanilinat"},
+            "8680041405983": {"ean": "8680041405983", "name": "Diving mask"},
+        }
+        with patch("inventory_md.vocabulary.lookup_ean_via_tingbok", side_effect=lambda e, *a, **k: products.get(e)):
+            rc = cli.main(["ean", "5941132002140", "8680041405983", "-d", str(tmp_path)])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "Zahar vanilinat" in out
+        assert "Diving mask" in out
+
+    def test_json_output(self, tmp_path, capsys):
+        self._inventory(tmp_path)
+        product = {"ean": "5941132002140", "name": "Zahar vanilinat", "brand": "Dr. Oetker"}
+        with patch("inventory_md.vocabulary.lookup_ean_via_tingbok", return_value=product):
+            rc = cli.main(["ean", "5941132002140", "-d", str(tmp_path), "--json"])
+        out = capsys.readouterr().out
+        assert rc == 0
+        payload = json.loads(out)
+        assert payload[0]["ean"] == "5941132002140"
+        assert payload[0]["product"]["name"] == "Zahar vanilinat"
+        assert payload[0]["items"][0]["id"] == "vanilla-sugar"
+
+    def test_no_tingbok_skips_the_network(self, tmp_path, capsys):
+        self._inventory(tmp_path)
+        with patch("inventory_md.vocabulary.lookup_ean_via_tingbok") as m:
+            rc = cli.main(["ean", "5941132002140", "-d", str(tmp_path), "--no-tingbok"])
+        assert rc == 0
+        m.assert_not_called()
+
+    def test_invalid_checksum_is_warned_about(self, tmp_path, capsys):
+        """A mistyped EAN should be flagged rather than silently missed."""
+        with patch("inventory_md.vocabulary.lookup_ean_via_tingbok", return_value=None):
+            cli.main(["ean", "5941132002141", "-d", str(tmp_path)])
+        err = capsys.readouterr().err
+        assert "checksum" in err.lower()

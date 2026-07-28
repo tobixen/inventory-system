@@ -26,74 +26,66 @@
 
 ## Found while processing the 2026-07-24 Sozopol shopping trip
 
-### Scope: hand the purchasing code over to `purchase-pipeline`
+### ~~Scope: hand the purchasing code over to `purchase-pipeline`~~
 
-A new project — https://github.com/tobixen/purchase-pipeline — has been created to
-own the receipt → ledger → publish layer that currently lives in `scripts/`
-(`ledger.py`, `shop_import.py`, `pipeline.py`, `shopping_context.py`,
-`tingbok_push.py`, `off_upload.py`, `openprices_publish.py`, `op_auth.py`). That
-code makes this project know about one particular person's accounting, Open Food
-Facts account and receipt formats, which it should not.
+DONE 2026-07-27: the receipt → ledger → publish layer now lives in
+https://github.com/tobixen/purchase-pipeline. What stayed here: inventory format
+and parsing, `add`/`edit`/`move`/`lookup`/`container`/`ean`, the vocabulary
+system, `check_quality`, and barcode/best-before extraction. Identifying a
+physical object is inventory's business; deciding what a purchase means is not.
 
-The migration is task 0 in that project's TODO. What stays here: inventory format
-and parsing, `add`/`edit`/`move`/`lookup`/`container`, the vocabulary system,
-`check_quality.py`, and barcode/best-before extraction. Identifying a physical
-object is inventory's business; deciding what a purchase means is not.
+### ~~`extract_barcodes.py` emits phantom checksum-valid EANs~~
 
-### `extract_barcodes.py` emits phantom checksum-valid EANs
+DONE 2026-07-28. The diagnosis held — the Dr. Oetker vanilla sugar sachet
+(`IMG_20260725_080322.jpg`) decoded as both the real `5941132002140` and a
+phantom `2931532002140`, right half byte-identical, all corruption in the
+parity-carrying left half — but two of the three proposed fixes turned out to be
+the wrong instrument, and processing the whole photo set (47 photos) is what
+showed it:
 
-**Bug, with a regression specimen.** One photo of a Dr. Oetker vanilla sugar
-sachet (`~/s/photos.tobixen/processed/IMG_20260725_080322.jpg`) produced two
-checksum-valid EAN-13s: the true `5941132002140` and a phantom `2931532002140`.
+* Fix 3, *raise zbar's uncertainty threshold*, is not reachable: pyzbar sets only
+  `ZBAR_CFG_ENABLE` and exposes no scanner config, so it would mean ctypes into
+  zbar internals or shelling out to `zbarimg --set`. Corroborating **above** the
+  library gets the same effect in-API: each image is decoded three ways
+  (original, 0.6×, autocontrast — `DECODE_VARIANTS`), which re-quantises the bar
+  widths and moves the binarisation threshold.
+* But corroboration must not *decide*. On a second specimen — a Bulgarian
+  луканка label, `IMG_20260715_123606.jpg` — the phantom `3200274928780`
+  out-corroborated the real `3800214928780` **3 reads to 2**. A majority, and
+  wrong. It is now the last resort, and only by a clean margin.
+* Fix 1, *rank by whether it resolves in tingbok*, is right but must stay a
+  **tie-breaker inside a conflict**, never a filter on a lone read: a genuinely
+  new product is absent from tingbok, and discarding such a read would be worse
+  than the bug. It is also outranked by a signal that costs nothing — a retail
+  pack never carries a restricted-distribution or coupon **GS1 prefix**, which
+  settled the vanilla sachet (`293…`) offline, with no lookup at all.
+* Grouping candidates by *digit similarity* is not enough either. A third read of
+  the луканка label, `3800874988780`, shared no right half with the real code, so
+  it carried no parity signature — yet pyzbar's polygon put it on the same
+  barcode. Reads are grouped by **bounding-box overlap**; two codes in different
+  parts of a shelf photo are two products, not a conflict.
+* Fix 2 stands as written: an unresolvable conflict is one `tag:TODO … (needs
+  review)` block listing the candidates, not several peer item lines.
 
-Diagnosis — compare them:
+The second specimen's opposite failure is handled too: `IMG_20260725_010632.jpg`
+(diving-mask label, EAN `8680041405983`), torn through the quiet zone, yields no
+read at all. `looks_like_undecoded_barcode()` now flags a photo that decoded to
+nothing but holds a barcode-like pattern. It reports *presence*, not the defect —
+we cannot tell a torn quiet zone from blur — but silence was the worst answer,
+since the photo then looked like one that simply had no barcode.
 
-```
-real     5 9 4 1 1 3 2 | 0 0 2 1 4 0
-phantom  2 9 3 1 5 3 2 | 0 0 2 1 4 0
-```
+Still open, found while measuring this: **the undecoded-barcode heuristic fires
+on 15 of 47 photos.** Some are real (both diving-mask shots, the vanilla sachet's
+companion photo), but the rate wants a look before it becomes noise the reviewer
+learns to skip. Tighten the thresholds (`_STRIPE_*`) against a labelled sample.
 
-The right half is byte-identical; all corruption is in the left half. That is the
-signature of a **parity misdecode**. EAN-13's left six digits are encoded in
-either L or G parity, and the *pattern* of those choices is what encodes the 13th
-(leading) digit — it has no bars of its own. A couple of bar-width errors flipped
-digits into their opposite-parity twins (`4`↔`3`, `1`↔`5` are one module apart in
-L/G), which corrupted the parity pattern, which decoded the leading digit as `2`
-instead of `5`. The checksum is then recomputed over the corrupted digits and
-passes. **A valid checksum is not evidence of a correct read.**
+### ~~`inventory-md ean EAN` — ad-hoc barcode lookup~~
 
-Fixes, cheapest first:
-
-1. **Rank candidates by whether they resolve in tingbok.** The tool already
-   prints `(unknown product)` next to the phantom and a full product record next
-   to the real one — turn that into the decision instead of a display detail.
-2. **Report conflicting candidates as `needs_review`** rather than as two peer
-   results (already noted in the generic process-shopping guide's TODO).
-3. **Raise zbar's uncertainty threshold** so a code must corroborate across
-   several scanlines before being emitted. This kills most parity misdecodes at
-   the source.
-
-Second specimen, the opposite failure: `IMG_20260725_010632.jpg` (a diving-mask
-label, EAN `8680041405983`) yielded **no** read at all, though the digits are
-plainly legible to a human. The label is torn straight through the barcode's
-right-hand quiet zone, which zbar requires, and the bars carry a striated thermal
-print texture. Multi-crop/rotation retries would not help here; recognising and
-*reporting* a damaged quiet zone might.
-
-Both photos are in `~/s/photos.tobixen/processed/` with ground truth recorded in
-`~/solveig-inventory/staging/shopping-2026-07-24-*.yaml`.
-
-### `inventory-md ean EAN` — ad-hoc barcode lookup
-
-Long-standing gap, already noted in the generic process-shopping guide. Looking up
-a manually-read EAN still requires a raw `curl GET https://tingbok.plann.no/api/ean/{ean}`,
-which is a permission prompt in an otherwise unattended workflow, and requires the
-agent to remember the hostname — which on 2026-07-25 it got wrong, from a stale
-note that has since been deleted.
-
-Add an `ean` subcommand alongside `vocabulary lookup`, using the same
-local-then-tingbok pattern. It pairs naturally with fix 1 above, which needs the
-same resolution call.
+DONE 2026-07-28: `inventory-md ean EAN [EAN …]`, inventory first then tingbok,
+with `--json`, `--no-tingbok`, check-digit validation, shop-prefix-insensitive
+matching, and exit status 1 on a barcode known neither locally nor upstream. The
+shared arithmetic (checksum, GS1 prefix, match keys, parity confusability) moved
+into `inventory_md.barcodes` so the CLI and `extract_barcodes.py` share one copy.
 
 ## Old stuff
 

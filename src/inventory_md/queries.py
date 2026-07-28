@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from . import vocabulary
+from . import barcodes, vocabulary
 from .parser import normalize_bb_date
 
 
@@ -26,7 +26,7 @@ def iter_items(data: dict) -> Iterator[tuple[dict, str, str, str]]:
     ``location`` is ``"<container>, <parent>"`` when a parent is present, else just
     the container id.
     """
-    for container in data["containers"]:
+    for container in data.get("containers", []) or []:
         container_id = container.get("id", "unknown")
         parent_id = container.get("parent", "")
         location = f"{container_id}, {parent_id}" if parent_id else container_id
@@ -182,6 +182,48 @@ def lookup_items(inventory_path: Path, ids: list[str], matches: list[str]) -> li
                     "bb": item.get("metadata", {}).get("bb"),
                 }
             )
+    return results
+
+
+def find_by_ean(inventory_path: Path, ean: str) -> list[dict[str, Any]]:
+    """Return every item whose barcode matches ``ean``.
+
+    Both ``ean:`` and ``isbn:`` are searched: an ISBN-13 *is* an EAN-13, and
+    the barcode extractor writes books out as ``ISBN:``, so a book scanned off
+    the shelf would otherwise never find its own inventory line.
+
+    Matching goes through :func:`barcodes.ean_matches`, so separators are
+    ignored and a bare number finds a shop-prefixed entry — but two different
+    shops' article numbers never match each other.  All copies are returned;
+    "do I already have this, and how old is the one I have" is the question
+    this answers.
+    """
+    if not (ean or "").strip():
+        return []
+
+    with open(inventory_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    results: list[dict[str, Any]] = []
+    for item, container_id, _parent_id, location in iter_items(data):
+        meta = item.get("metadata", {})
+        stored = next(
+            (str(meta[key]) for key in ("ean", "isbn") if meta.get(key) and barcodes.ean_matches(str(meta[key]), ean)),
+            None,
+        )
+        if stored is None:
+            continue
+        name = item.get("name", "") or ""
+        results.append(
+            {
+                "id": item.get("id") or name[:20],
+                "name": name,
+                "container": container_id,
+                "location": location,
+                "ean": str(stored),
+                "bb": meta.get("bb"),
+            }
+        )
     return results
 
 

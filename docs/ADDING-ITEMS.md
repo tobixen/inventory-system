@@ -85,8 +85,22 @@ need to query OFF directly. This is **product/EAN** lookup — distinct from the
 [Categories](#categories); do not use the category endpoint for an EAN.
 
 ```bash
-curl -s https://tingbok.plann.no/api/ean/EAN                        # one product
-curl -s "https://tingbok.plann.no/api/ean/search?receipt_name=NAME"   # by receipt name
+inventory-md ean EAN                 # inventory first, then tingbok
+inventory-md ean EAN --json
+inventory-md ean EAN --no-tingbok    # offline: do we already have one?
+```
+
+Prefer this over a raw `curl`: it needs no hostname, is one less permission
+prompt in an unattended run, and it answers *both* questions — "what is this
+product" and "do I already have one, and how old is it". Matching ignores
+separators and the shop-name prefix on
+[shop-local codes](#shop-local-codes-prefix-with-the-shop-name), so `40853712`
+finds `lidl-40853712`. Exit status is 1 when a barcode is known neither locally
+nor to tingbok.
+
+Search by receipt name has no subcommand yet:
+```bash
+curl -s "https://tingbok.plann.no/api/ean/search?receipt_name=NAME"
 ```
 
 From a photo, extract the barcode and look it up in one step:
@@ -94,6 +108,19 @@ From a photo, extract the barcode and look it up in one step:
 scripts/extract_barcodes.py --lookup EAN
 scripts/extract_barcodes.py --best-before PHOTO.jpg --json   # also OCRs the best-before
 ```
+
+A photo can decode to **more than one checksum-valid EAN**, because an EAN-13
+misdecode recomputes the check digit — a valid checksum is not evidence of a
+correct read. The extractor decodes each image several ways and discards reads
+that don't corroborate; when it cannot tell which candidate is real it emits a
+single `tag:TODO … (needs review — conflicting barcode reads)` block listing
+them, rather than two item lines that both look legitimate. Never pick one of
+those candidates by eye — resolve it with `inventory-md ean` on each.
+
+A `tag:TODO (barcode-like pattern detected, but nothing decoded)` block means
+the photo has a barcode that zbar could not read at all (torn, occluded,
+blurred, or missing the quiet zone). Read the digits by hand and use
+`inventory-md ean`.
 
 If tingbok returns "not found" (it found nothing and OFF has nothing either), the
 product is new: add it to the inventory now (above), and consider contributing it

@@ -341,3 +341,129 @@ class TestIsDescendantOf:
     def test_not_a_descendant(self):
         concepts = {cid: vocabulary.Concept.from_dict(c) for cid, c in FOOD_VOCAB["concepts"].items()}
         assert not vocabulary.is_descendant_of("fender", "food", concepts)
+
+
+# --- EAN lookup -------------------------------------------------------------
+#
+# `inventory-md ean EAN` needs to answer "do I already have this?" from
+# inventory.json before asking tingbok.  Shop-local barcodes are stored with a
+# shop-name prefix (see docs/ADDING-ITEMS.md), so a bare number read off a label
+# must still match `lidl-<number>`.
+
+
+@pytest.fixture
+def ean_inventory(tmp_path: Path) -> Path:
+    inv = {
+        "containers": [
+            {
+                "id": "pantry",
+                "parent": "kitchen",
+                "items": [
+                    {
+                        "id": "vanilla-sugar-2026-07-24",
+                        "name": "Dr. Oetker vanillasukker",
+                        "metadata": {"id": "vanilla-sugar-2026-07-24", "ean": "5941132002140", "bb": _iso(180)},
+                    },
+                    {
+                        "id": "vanilla-sugar-2026-05-01",
+                        "name": "Dr. Oetker vanillasukker (older)",
+                        "metadata": {"id": "vanilla-sugar-2026-05-01", "ean": "5941132002140", "bb": _iso(20)},
+                    },
+                    {
+                        "id": "bread-lidl",
+                        "name": "Lidl rugbrød",
+                        "metadata": {"id": "bread-lidl", "ean": "lidl-40853712"},
+                    },
+                    {
+                        "id": "no-ean-item",
+                        "name": "Loose carrots",
+                        "metadata": {"id": "no-ean-item"},
+                    },
+                ],
+            }
+        ]
+    }
+    path = tmp_path / "inventory.json"
+    path.write_text(json.dumps(inv), encoding="utf-8")
+    return path
+
+
+class TestFindByEan:
+    def test_exact_match_returns_every_copy(self, ean_inventory: Path):
+        results = queries.find_by_ean(ean_inventory, "5941132002140")
+        assert [r["id"] for r in results] == ["vanilla-sugar-2026-07-24", "vanilla-sugar-2026-05-01"]
+        assert results[0]["location"] == "pantry, kitchen"
+        assert results[0]["ean"] == "5941132002140"
+
+    def test_no_match_returns_empty(self, ean_inventory: Path):
+        assert queries.find_by_ean(ean_inventory, "8680041405983") == []
+
+    def test_hyphens_and_spaces_ignored(self, ean_inventory: Path):
+        assert len(queries.find_by_ean(ean_inventory, "5941-1320 02140")) == 2
+
+    def test_bare_number_matches_shop_prefixed_ean(self, ean_inventory: Path):
+        results = queries.find_by_ean(ean_inventory, "40853712")
+        assert [r["id"] for r in results] == ["bread-lidl"]
+
+    def test_shop_prefixed_query_matches_verbatim(self, ean_inventory: Path):
+        results = queries.find_by_ean(ean_inventory, "lidl-40853712")
+        assert [r["id"] for r in results] == ["bread-lidl"]
+
+    def test_items_without_ean_are_skipped(self, ean_inventory: Path):
+        # An empty needle must not match the EAN-less item.
+        assert queries.find_by_ean(ean_inventory, "") == []
+
+
+class TestFindByEanReviewFixes:
+    """Defects found reviewing v0.15.0."""
+
+    def test_finds_books_stored_under_isbn(self, tmp_path: Path):
+        """extract_barcodes writes books as `ISBN:`, never `EAN:`.
+
+        So looking a book's barcode up found nothing, even though the extractor
+        itself had put the line there. An ISBN-13 *is* an EAN-13.
+        """
+        inv = {
+            "containers": [
+                {
+                    "id": "shelf",
+                    "items": [
+                        {
+                            "id": "kon-tiki",
+                            "name": "Kon-Tiki",
+                            "metadata": {"id": "kon-tiki", "isbn": "9788203263903"},
+                        }
+                    ],
+                }
+            ]
+        }
+        path = tmp_path / "inventory.json"
+        path.write_text(json.dumps(inv), encoding="utf-8")
+        results = queries.find_by_ean(path, "9788203263903")
+        assert [r["id"] for r in results] == ["kon-tiki"]
+        assert results[0]["ean"] == "9788203263903"
+
+    def test_shop_prefixes_keep_shops_apart(self, tmp_path: Path):
+        inv = {
+            "containers": [
+                {
+                    "id": "pantry",
+                    "items": [
+                        {"id": "a", "name": "Lidl thing", "metadata": {"id": "a", "ean": "lidl-40853712"}},
+                        {"id": "b", "name": "Billa thing", "metadata": {"id": "b", "ean": "billa-40853712"}},
+                    ],
+                }
+            ]
+        }
+        path = tmp_path / "inventory.json"
+        path.write_text(json.dumps(inv), encoding="utf-8")
+        assert [r["id"] for r in queries.find_by_ean(path, "lidl-40853712")] == ["a"]
+        assert [r["id"] for r in queries.find_by_ean(path, "billa-40853712")] == ["b"]
+        # A bare number is genuinely ambiguous between the two, and says so by
+        # returning both rather than silently picking one.
+        assert sorted(r["id"] for r in queries.find_by_ean(path, "40853712")) == ["a", "b"]
+
+    def test_malformed_inventory_json_is_not_a_traceback(self, tmp_path: Path):
+        path = tmp_path / "inventory.json"
+        path.write_text(json.dumps({"items": []}), encoding="utf-8")
+        assert queries.find_by_ean(path, "5941132002140") == []
