@@ -8,9 +8,15 @@ Create personal skill files under `~/.claude/skills/` that reference these guide
 
 | File | Purpose |
 |------|---------|
-| `process-shopping.md` | Process a shopping receipt and update the inventory |
 | `process-inventory-photos.md` | Process photos of containers/locations and update the inventory |
 | `suggest-recipe.md` | Suggest recipes prioritising soon-to-expire inventory items |
+
+`process-shopping.md` used to live here. It moved to
+[purchase-pipeline](https://github.com/tobixen/purchase-pipeline), at
+`claude-skills/process-shopping.md`: turning a receipt into a ledger, inventory
+entries and published prices is that project's workflow, and all but three of
+its commands are that project's. What an inventory *item* looks like once
+written stays here — see `docs/ADDING-ITEMS.md` below.
 
 ## Item format reference
 
