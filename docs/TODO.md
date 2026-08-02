@@ -68,11 +68,22 @@ itself. Orientation is handled (`extract_text_ocr_oriented()` auto-rotates), but
 not the rest: dotted/dot-matrix printer fonts, curved and foil surfaces, low
 contrast on white-on-white embossing.
 
-This is the extraction half of a goal shared with purchase-pipeline. Associating
-an extracted date with the *right item* — pairing a barcode photo with the expiry
-in that photo or the immediately following one, and matching both to a receipt
-line — happens in `purchase_pipeline.shop_import` (`classify_photo_result()`) and
-is tracked there. Neither half delivers the goal alone.
+This is the extraction half of a goal shared with purchase-pipeline, and it is
+now the only half still open. Associating an extracted date with the *right item*
+— pairing a barcode photo with the expiry in that photo or the immediately
+following one, and matching both to a receipt line — was done on 2026-07-30 in
+`purchase_pipeline.photo_match` (moved there out of `shop_import`): a scan fills
+a receipt line's `ean`/`bb` when the line's own EAN candidates corroborate it,
+and anything unsettled comes back flagged with a reason instead of guessed.
+
+Two things that half now expects of this one:
+
+* a `status: needs_review` or `NO_DECODE` result is routed to the reviewer as a
+  `barcode_conflict` / `undecoded` photo carrying no EAN, and a `rejected` losing
+  read is dropped — so those verdicts are worth keeping exactly as they are;
+* a date this extractor cannot read stays unread all the way through. Nothing
+  downstream invents one, which is why the accuracy of this half is now the whole
+  of what stands between a trip and a staging file nobody had to open a photo for.
 
 ---
 
