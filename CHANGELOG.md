@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [v0.15.0] - 2026-08-10
+## [v0.15.0] - 2026-08-12
 
 ### Added
 - **`inventory-md ean EAN [EAN …]`** — ad-hoc barcode lookup: local inventory first, then tingbok. Looking up a manually-read EAN previously meant a raw `curl https://tingbok.plann.no/api/ean/{ean}`, which is a permission prompt in an otherwise unattended shopping run and one more hostname for the agent to remember — which on 2026-07-25 it got wrong, from a stale note since deleted. It also answers the question `curl` cannot: *do I already have one, and how old is it*. Both `ean:` and `isbn:` are searched, since an ISBN-13 is an EAN-13 and books are filed under `ISBN:`. Separators are ignored and a bare number finds a shop-prefixed entry (`40853712` finds `lidl-40853712`), while two shops' article numbers never match each other — the prefix exists to keep them apart. A mistyped GTIN is flagged by check digit; `--json` for scripting, `--no-tingbok` for an offline inventory-only answer, and exit status 1 when a barcode is known neither locally nor upstream. New `queries.find_by_ean()` and a new `inventory_md.barcodes` module holding the checksum, GS1-prefix and confusability arithmetic that `extract_barcodes.py` had kept to itself.
