@@ -4,6 +4,17 @@
 **Reviewer:** Claude (AI-assisted review)
 **Version:** Based on current main branch
 
+> **Swept 2026-08-13.** The security findings (path traversal, CORS, global git
+> config) were fixed with tests, as were the missing parser and CLI suites — the
+> architecture sketch above, with its three modules and one test file, no longer
+> describes this repo. Of the rest, only the `api_server.py` module-level state
+> (3.1) survived into `docs/TODO.md`. Container-ID case sensitivity (8.2) is
+> handled by `parser.find_container_section()`, which casefolds; the remaining
+> style items — magic strings, type-annotation gaps, module-level regex
+> compilation (`re` caches compiled patterns anyway), full-file rewrite on every
+> change (which §6.1 itself judged fine at this scale) — were not migrated. This
+> file is a record, not a worklist.
+
 ---
 
 ## Executive Summary

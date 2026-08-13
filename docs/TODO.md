@@ -73,6 +73,59 @@ vocabulary; the function those comments describe is
 `fetch_vocabulary_from_tingbok()`. Nothing bundles a vocabulary any more. Almost
 entirely a rename, but it misleads on every read.
 
+### `vocabulary.py` is a second implementation of tingbok's data model
+
+Raised in `docs/code-review-2026-05-08.md`, still open at the 2026-06-11 review,
+which called it the biggest architectural ROI in the codebase. `vocabulary.py`
+carries:
+
+* a `Concept` dataclass mirroring tingbok's `VocabularyConcept` Pydantic model —
+  two representations of one thing, kept in sync by hand;
+* `build_category_tree()`, which re-derives hierarchy (inferred parents, stub
+  nodes, `category_by_source` virtual nodes) from the flat list tingbok serves.
+  If tingbok changes how hierarchy works, this breaks silently;
+* `_cache_read`/`_cache_write`, paralleling tingbok's own cache, with the TTLs
+  set independently in the two projects — **7 days here, 60 days there**;
+* `_SOURCE_LABELS` and `_uri_to_source()`, i.e. knowledge of which sources exist.
+
+Most of this can be deleted rather than fixed, but only after tingbok serves the
+answers — an ancestors endpoint, a pre-built tree, source names and language
+chains, all tracked under "Serve hierarchy answers instead of making clients
+compute them" in `~/tingbok/TODO.md`. Deleting first is not an option: the
+duplication exists precisely because there is nothing to call yet.
+
+### `sync_eans_to_inventory.py` should be a CLI subcommand
+
+`inventory-md sync-eans`. Photo scan → EAN extract → tingbok lookup → markdown
+insertion is a pipeline, not a one-off admin script, and the other three scripts
+of that weight (`find_expiring_items`, `lookup_items`, `check_quality`) have all
+graduated into the package.
+
+The tests it lacked in May exist now (`tests/test_sync_eans_to_inventory.py`),
+and the June round removed its duplicated barcode plumbing and section-scanning,
+so what is left is genuinely just the move.
+
+### `parse` does much more than parse
+
+`parse_command` (`cli.py:175`) parses, thumbnails, generates listings, fetches
+vocabulary, looks up EANs, pushes observations to tingbok and generates the
+shopping list — about 300 lines. A command named `parse` writing to a network
+service is surprising.
+
+The June review added `--no-push` and fixed the leaked `niquests.Session`, but
+explicitly left the rest: split the function into testable stages, and add an
+`--offline` mode that means it.
+
+### Odds and ends in `api_server.py`
+
+Module-level mutable state — `inventory_data`, `inventory_path`, `aliases`
+(`api_server.py:23-25`) — makes the server awkward to test and is the last
+survivor of the 2025-12-28 review's structural findings. A small state class
+behind a `Depends()` was the suggestion.
+
+Related and smaller: eight `except Exception` handlers remain, each flattening a
+real error into a string. The bare `except:` forms are gone.
+
 ---
 
 ## Barcode and best-before extraction from photos

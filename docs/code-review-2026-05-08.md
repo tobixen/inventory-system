@@ -1,5 +1,14 @@
 # Code Review: inventory-md + tingbok (2026-05-08)
 
+> **Swept 2026-08-13.** Findings still open were migrated to the TODO documents;
+> this file is now a record, not a worklist. `find_expiring_items` shipped as
+> `inventory-md expiring` with hierarchy-aware `--food` (the soybeans bug is
+> gone), and `check_quality` became the `inventory-md-check-quality` console
+> script rather than a `parse` flag — deliberately, so purchase-pipeline can call
+> it by name. The `vocabulary.py` duplication and `sync_eans_to_inventory.py` are
+> in `docs/TODO.md`; the ancestors endpoint and the rest of what tingbok must
+> serve first are in `~/tingbok/TODO.md`.
+
 ## Separation of concerns: mostly good, with one big blur
 
 The high-level split is solid: tingbok owns authoritative category knowledge (SKOS

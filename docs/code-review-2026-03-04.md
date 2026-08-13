@@ -1,5 +1,8 @@
 # Code Review — 2026-03-04
 
+> **Swept 2026-08-13.** All five findings are marked Fixed; nothing was migrated
+> to a TODO. This file is a record, not a worklist.
+
 ## `vocabulary.py`
 
 ### `fetch_vocabulary_from_tingbok` (lines 230–238)

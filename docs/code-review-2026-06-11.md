@@ -4,6 +4,13 @@
 **Scope:** All of `src/inventory_md/`, `scripts/`, packaging and Makefile, at commit `5fefd1f`.
 **Baseline:** Follows up on `CODE-REVIEW.md` (2025-12-28) and `code-review-2026-05-08.md`.
 
+> **Swept 2026-08-13.** Everything in §1–§4 carries a "Fixed" annotation except
+> three threads, now migrated to the TODO documents: the `vocabulary.py` /
+> tingbok model duplication (split between `docs/TODO.md` and
+> `~/tingbok/TODO.md`), `sync_eans_to_inventory.py` as a CLI subcommand, and the
+> `parse` architectural split plus `--offline` that §4 left out of scope. Its
+> "no tests" half is done. This file is now a record, not a worklist.
+
 **Health snapshot:** 623 tests pass, `ruff check` is clean. Test coverage has grown
 enormously since the 2025-12 review (parser, CLI, config, vocabulary, ledger,
 staging, queries, labels, photo registry all covered). The codebase is in good
