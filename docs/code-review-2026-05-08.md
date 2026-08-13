@@ -69,7 +69,8 @@ Because there's no canonical tingbok URL for concepts yet, inventory-md can't re
 locally. This is why `shopping_list.py` has category-matching algorithms instead of just
 asking tingbok "is `food/legumes/soy-beans` a descendant of `food`?"
 
-The fix described in `TODO-CATEGORIES.md` (give concepts canonical tingbok URLs, let
+The fix described in `TODO-CATEGORIES.md` (retired 2026-08-13; the item now lives
+under "Canonical tingbok URLs" in `~/tingbok/TODO.md`) — give concepts canonical tingbok URLs, let
 clients navigate the tree by URL) would let inventory-md delete most of its
 category-matching code and replace it with "does this item's concept URL appear under this
 ancestor concept URL?" — a single tingbok API call.

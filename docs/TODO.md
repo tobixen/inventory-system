@@ -16,13 +16,62 @@ repeating.
 
 ## Categories and the vocabulary system
 
-**The big one, and the least finished.** See `docs/TODO-CATEGORIES.md` for the
-detail; it is a live document, not a leftover.
+**The big one, and the least finished.**
 
 The SKOS category work has a fully-ticked task list and still did not end up as
 intended — the checklist measured features delivered, not whether categorising a
-real inventory got easier. Treat that list as history and `TODO-CATEGORIES.md` as
-the current state.
+real inventory got easier. Treat that list as history.
+
+Where the work lives: the category *data* — the vocabulary, the sources, the
+hierarchy, the translations — is [tingbok](https://tingbok.plann.no)'s, and tasks
+about it belong in `~/tingbok/TODO.md`. What is left here is how an inventory
+*consumes* that data: resolving a category string on an item line, merging local
+vocabulary on top, and degrading when tingbok is unreachable.
+
+### 342 of 1736 concepts have no parent
+
+Measured in `~/solveig-inventory/vocabulary.json` on 2026-08-13 (generated
+2026-08-06 against a tingbok returning 200). A fifth of the tree is roots, which
+is why the category browser reads as a flat list of oddities — `comma_splice`,
+`brunost` and `dolmas` are all top-level.
+
+The half that is this project's: **89 of those roots are inventory-sourced**,
+i.e. labels tingbok resolved to nothing, so `vocabulary.py` created a local stub
+with no parent. Some are near-duplicates of each other (`cling-film` *and*
+`clingfilm`, `brie` *and* `bries`) and want normalising or aliasing before
+anything is asked of tingbok. Of the remaining 253, **132 are tingbok-sourced**
+and unparented — a gap in the hierarchy, tracked there — and 121 are `inferred`,
+parents synthesised locally that never got a parent of their own.
+
+Before treating this as a bug, decide what an unresolvable label *should* do. A
+local stub at the root is a defensible answer; the complaint is only that nobody
+chose it deliberately.
+
+### Auto-write `category:` back into the inventory markdown
+
+`parse` resolves and enriches categories from EAN lookups, but the result only
+reaches `inventory.json` — the markdown line keeps whatever was typed. Writing it
+back would make the enrichment durable and reviewable in git.
+
+`inventory-md edit --category` already rewrites a line in place and is the manual
+version of exactly this, so the mechanism exists; what is missing is the decision
+about when a lookup is confident enough to edit the user's file unasked.
+
+### Optional tingbok fallback
+
+Make tingbok an optional dependency: if the library is installed and
+`tingbok.plann.no` does not respond, call it directly instead of failing.
+
+This also wants a review of which dependencies are optional at all — `mcp` is
+clearly not needed for this.
+
+### "Package vocabulary" is a name for something that no longer exists
+
+`vocabulary.py` still calls it the "package vocabulary" — five times in comments
+and docstrings, plus the `pkg_vocab` local — for what is now simply the tingbok
+vocabulary; the function those comments describe is
+`fetch_vocabulary_from_tingbok()`. Nothing bundles a vocabulary any more. Almost
+entirely a rename, but it misleads on every read.
 
 ---
 
