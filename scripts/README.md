@@ -1,6 +1,19 @@
-# Inventory Analysis Scripts
+# Inventory Scripts
 
-Standalone Python scripts for analyzing inventory data. These scripts work directly with `inventory.json` files and have no dependencies beyond Python 3.10+.
+Loose scripts that work directly on an inventory, alongside the `inventory-md`
+CLI. Two kinds live here, and the difference matters when something breaks:
+
+- **Standalone**: `analyze_inventory.py`, `export_tags.py`, `find-space-in-series.py`
+  and `migrate-tags.py` read `inventory.json` (or `inventory.md`) with nothing
+  but Python 3.10+.
+- **Not standalone**: `extract_barcodes.py` and `sync_eans_to_inventory.py` need
+  optional extras (pyzbar, Pillow, niquests; easyocr for OCR), and
+  `find_expiring_items.py` / `lookup_items.py` are thin wrappers that import the
+  installed `inventory_md` package.
+
+`release.sh` is a maintainer tool (tag, push, update the AUR package), not an
+inventory script. Anything that graduated into the package is documented under
+[Graduated to the CLI](#graduated-to-the-cli) rather than here.
 
 ## Scripts
 
@@ -22,35 +35,6 @@ python scripts/analyze_inventory.py ~/furusetalle9-inventory/inventory.json
 - Top 15 tags by frequency
 - Hierarchy analysis (parent/child relationships)
 - Data quality summary
-
-### check_quality.py
-
-Focused data quality checker that identifies issues requiring attention.
-
-```bash
-# Check inventory in current directory
-python scripts/check_quality.py
-
-# Check specific inventory
-python scripts/check_quality.py ~/furusetalle9-inventory/inventory.json
-
-# Verbose output
-python scripts/check_quality.py -v inventory.json
-```
-
-**Checks performed:**
-- Duplicate container IDs (ERROR)
-- Missing parent references (ERROR)
-- Items tagged TODO (WARNING)
-- Untagged items (INFO)
-- Empty containers (INFO)
-- Missing descriptions (INFO)
-- Containers without images (INFO)
-
-**Exit codes:**
-- `0` - No errors found
-- `1` - Errors found
-- `2` - File not found or other error
 
 ### find-space-in-series.py
 
@@ -90,6 +74,43 @@ sorting as text, and `--start 0` covers a series that numbers from zero, as
 - `1` - the series is full (raise `--max` or pick another prefix)
 - `2` - bad arguments, or inventory file missing or unreadable
 
+### extract_barcodes.py
+
+Reads barcodes, QR codes and (optionally) best-before dates off product photos.
+
+```bash
+./extract_barcodes.py photos/F-01/*.jpg
+./extract_barcodes.py --lookup 5701234567890      # one EAN/ISBN, no images
+./extract_barcodes.py --best-before photos/*.jpg  # OCR the dates too
+```
+
+Needs `pyzbar` and `Pillow` (system `libzbar0`) plus `niquests`; `easyocr` for
+the OCR paths. `./extract_barcodes.py --help` documents the rest.
+
+### sync_eans_to_inventory.py
+
+Scans the photo directories, extracts barcodes, and adds the EANs that are
+missing from the matching container in `inventory.md`. Dry-run by default.
+
+```bash
+./sync_eans_to_inventory.py                   # show what would be added
+./sync_eans_to_inventory.py --apply           # write it
+./sync_eans_to_inventory.py --container F-01  # one container only
+```
+
+Same barcode dependencies as `extract_barcodes.py`, and it imports
+`inventory_md`, so the package must be installed.
+
+### migrate-tags.py
+
+One-off migration from comma-separated tags to the hierarchical format, driven
+by `tag-mapping.json` in the repository root.
+
+```bash
+./migrate-tags.py --dry-run inventory.md   # preview
+./migrate-tags.py inventory.md             # apply
+```
+
 ### export_tags.py
 
 Export tag statistics in various formats for reporting or further analysis.
@@ -116,7 +137,7 @@ python scripts/export_tags.py inventory.json --format json > tags.json
 
 ```bash
 cd ~/furusetalle9-inventory
-python ~/inventory-md/scripts/check_quality.py
+inventory-md-check-quality
 ```
 
 ### Generate Full Report
@@ -143,12 +164,39 @@ diff furusetalle9-stats.txt solveig-stats.txt
 python scripts/export_tags.py inventory.json --format csv | sort -t',' -k2 -nr > tags-sorted.csv
 ```
 
+## Graduated to the CLI
+
+Three things that used to be scripts in this directory are now part of the
+package, so that other projects can depend on them by name rather than by path:
+
+| Was | Is now |
+|---|---|
+| `scripts/check_quality.py` | `inventory-md-check-quality` (module `inventory_md.check_quality`) |
+| `scripts/find_expiring_items.py` | `inventory-md expiring` — the script survives as a thin wrapper |
+| `scripts/lookup_items.py` | `inventory-md lookup` — likewise |
+
+`inventory-md-check-quality` is the data-quality gate. It takes an
+`inventory.json` path (default: `inventory.json` in the current directory) and
+reports at three levels:
+
+- **ERROR** — duplicate container IDs, parent references pointing at no
+  container, and categories that are too broad (`--allow-broad-categories`, or
+  a per-item `category-broad-ok` tag, waives the last one)
+- **WARNING** — items tagged `TODO`, items with no category, categories the
+  vocabulary cannot resolve, food with no best-before date, and shop-specific
+  EANs that never got a chain prefix
+- **INFO** — empty containers, missing descriptions, containers with no images
+
+`-v` for detail, `--fix-categories` to apply the suggested category
+replacements, `--no-tingbok` to keep it offline. Exit status is 1 if there were
+errors, 0 otherwise.
+
 ## Integration with inventory-md
 
 These scripts complement the main `inventory-md` CLI:
 
 1. Run `inventory-md parse` to update JSON from markdown
-2. Run analysis scripts to review the data
+2. Run the analysis scripts, or `inventory-md-check-quality`, to review the data
 3. Use the insights to improve the inventory
 
 ## Adding to PATH
@@ -161,5 +209,8 @@ export PATH="$PATH:$HOME/inventory-md/scripts"
 
 # Then use directly
 analyze_inventory.py ~/furusetalle9-inventory/inventory.json
-check_quality.py
+find-space-in-series.py C
 ```
+
+The console scripts (`inventory-md`, `inventory-md-check-quality`) are installed
+on the PATH by pip and need none of this.
