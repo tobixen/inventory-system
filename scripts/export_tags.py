@@ -76,7 +76,7 @@ def format_json(tags: Counter) -> str:
     data = {
         "total_unique": len(tags),
         "total_usages": sum(tags.values()),
-        "tags": [{"tag": tag, "count": count} for tag, count in tags.most_common()]
+        "tags": [{"tag": tag, "count": count} for tag, count in tags.most_common()],
     }
     return json.dumps(data, indent=2, ensure_ascii=False)
 
