@@ -229,6 +229,39 @@ is that the registry only covers photos that have been *processed* — an unproc
 photo appears in neither. Decide whether that matters before doing any work: if it
 does, track a generated manifest; if not, close this.
 
+### Container IDs that differ only in separator or padding are different containers
+
+`A38` and `A-38` are meant to be the same box, and `A-38` is the spelling to
+standardise on. `find_container_section()` casefolds an ID before comparing
+(`parser.py:636-646`), but does nothing about the separator or the zero
+padding, so `A-38` simply does not resolve against a `## ID:A38` heading —
+verified: it returns `None`, and `add_item()` then raises
+`ValueError: Container ID:A-38 not found`.
+
+That is at least a loud failure rather than a duplicate container, so this is a
+usability item, not a data-corruption one. But `~/furusetalle9-inventory`
+writes its boxes `A1`, `A5`, `A38` with no separator throughout, and
+`scripts/find-space-in-series.py` deliberately prints the canonical `A-38` — so
+today the tool's advice and the tool's own writers disagree, and the heading has
+to be renamed by hand before the ID it recommends can be used.
+
+Worth noting while in there: a separator-less series interacts badly with the
+prefix fallback. Against that same file, `A3` resolves to `A38` — unambiguously,
+so no `AmbiguousContainerError` — which is fine when `A3` does not exist and
+surprising when somebody expects it to be created.
+
+Normalise on comparison — strip `-`/`_`/space, drop leading zeros, casefold —
+in one place that both the parser and the writers use. Two questions to settle
+first: whether `AmbiguousContainerError` should fire when normalising makes two
+existing headings collide, and what the writers should do about a file whose
+headings are inconsistent (rewrite them, or leave them and match loosely).
+
+**Separately, and physically:** zero padding *should* be insignificant, but in
+`~/furusetalle9-inventory` it is not. `A5` and `A05` are two different boxes,
+as are `G5`/`G05` and `G6`/`G06`. That is a labelling problem to fix on the
+boxes themselves, not something the code should be taught to support;
+`find-space-in-series.py` warns when it sees such a pair.
+
 ---
 
 ## Web UI and deployment
