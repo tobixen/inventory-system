@@ -438,6 +438,33 @@ class TestExtractMetadataTypedFields:
         assert result["name"] == "Spaghetti"
         assert "EST" not in result["name"]
 
+    # The malformed-value cases: a typed field whose value does not parse must
+    # keep the text it was given rather than be dropped or coerced, so the
+    # mistake stays visible in the markdown instead of silently disappearing.
+
+    def test_qty_non_numeric_kept_as_string(self):
+        result = parser.extract_metadata("qty:noen Spaghetti")
+        assert result["metadata"]["qty"] == "noen"
+
+    def test_mass_unknown_unit_kept_as_string(self):
+        result = parser.extract_metadata("mass:500lb Flour")
+        assert result["metadata"]["mass"] == "500lb"
+        assert "mass_g" not in result["metadata"]
+
+    def test_volume_unknown_unit_kept_as_string(self):
+        result = parser.extract_metadata("volume:12oz Juice")
+        assert result["metadata"]["volume"] == "12oz"
+        assert "volume_l" not in result["metadata"]
+
+    def test_bb_non_date_kept_as_string(self):
+        result = parser.extract_metadata("bb:ukjent Milk")
+        assert result["metadata"]["bb"] == "ukjent"
+
+    def test_volume_dl_normalized_to_liters(self):
+        result = parser.extract_metadata("volume:5dl Milk")
+        assert result["metadata"]["volume_l"] == 0.5
+        assert "volume" not in result["metadata"]
+
 
 class TestExtractMetadataKeyWhitelist:
     """Unknown keys must not be swallowed as metadata."""
