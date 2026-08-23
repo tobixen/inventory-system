@@ -13,7 +13,7 @@ Comprehensive analysis of an inventory file, printing statistics about container
 python scripts/analyze_inventory.py
 
 # Analyze specific inventory
-python scripts/analyze_inventory.py ~/furuset-inventory/inventory.json
+python scripts/analyze_inventory.py ~/furusetalle9-inventory/inventory.json
 ```
 
 **Output includes:**
@@ -32,7 +32,7 @@ Focused data quality checker that identifies issues requiring attention.
 python scripts/check_quality.py
 
 # Check specific inventory
-python scripts/check_quality.py ~/furuset-inventory/inventory.json
+python scripts/check_quality.py ~/furusetalle9-inventory/inventory.json
 
 # Verbose output
 python scripts/check_quality.py -v inventory.json
@@ -51,6 +51,44 @@ python scripts/check_quality.py -v inventory.json
 - `0` - No errors found
 - `1` - Errors found
 - `2` - File not found or other error
+
+### find-space-in-series.py
+
+Prints the unused IDs of a numbered container series, so a newly packed box can
+be given a free ID without reading through the whole inventory.
+
+```bash
+# All free numbers in C-01..C-99
+python scripts/find-space-in-series.py C
+
+# Just the next free one
+python scripts/find-space-in-series.py C -n 1
+
+# A different series, a different inventory, a shorter range
+python scripts/find-space-in-series.py TC ~/furusetalle9-inventory/inventory.json --max 20
+```
+
+Existing IDs are matched case-insensitively, with an optional `-`/`_`/space
+separator and any amount of zero padding: zero padding *should* carry no
+meaning, so `C-01`, `C1` and `c 001` are read as the same box. Where two
+differently-spelled IDs turn out to be two real boxes (`A5` and `A05` both
+exist in `~/furusetalle9-inventory`), the number counts as taken and a warning
+goes to stderr — that is a labelling problem to fix on the physical boxes, not
+in the data. The match is anchored: `TC-01` belongs to the `TC` series, not
+to `C`.
+
+What it prints is the *canonical* spelling — uppercase prefix, dash, two digits
+— whatever the existing IDs look like. A series written `A38` in the markdown
+will therefore be offered `A-38`; that is the intended form, but note that the
+rest of the toolchain does not yet treat the two as one container (see
+`docs/TODO.md`). `--max 100` or higher widens the padding to keep one series
+sorting as text, and `--start 0` covers a series that numbers from zero, as
+`FM-0` does.
+
+**Exit codes:**
+- `0` - at least one free ID found
+- `1` - the series is full (raise `--max` or pick another prefix)
+- `2` - bad arguments, or inventory file missing or unreadable
 
 ### export_tags.py
 
@@ -77,14 +115,14 @@ python scripts/export_tags.py inventory.json --format json > tags.json
 ### Quick Health Check
 
 ```bash
-cd ~/furuset-inventory
+cd ~/furusetalle9-inventory
 python ~/inventory-md/scripts/check_quality.py
 ```
 
 ### Generate Full Report
 
 ```bash
-cd ~/furuset-inventory
+cd ~/furusetalle9-inventory
 python ~/inventory-md/scripts/analyze_inventory.py > report.txt
 ```
 
@@ -92,11 +130,11 @@ python ~/inventory-md/scripts/analyze_inventory.py > report.txt
 
 ```bash
 # Generate stats for both
-python scripts/analyze_inventory.py ~/furuset-inventory/inventory.json > furuset-stats.txt
+python scripts/analyze_inventory.py ~/furusetalle9-inventory/inventory.json > furusetalle9-stats.txt
 python scripts/analyze_inventory.py ~/solveig-inventory/inventory.json > solveig-stats.txt
 
 # Compare
-diff furuset-stats.txt solveig-stats.txt
+diff furusetalle9-stats.txt solveig-stats.txt
 ```
 
 ### Export Tags for Review
@@ -122,6 +160,6 @@ For convenience, add the scripts directory to your PATH:
 export PATH="$PATH:$HOME/inventory-md/scripts"
 
 # Then use directly
-analyze_inventory.py ~/furuset-inventory/inventory.json
+analyze_inventory.py ~/furusetalle9-inventory/inventory.json
 check_quality.py
 ```

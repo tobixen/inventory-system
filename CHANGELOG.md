@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`scripts/find-space-in-series.py`** — prints the unused IDs of a numbered container series (`C-01`, `C-02`, …), so a newly packed box gets a free ID without reading through the whole inventory by eye. Existing IDs are matched case-insensitively with an optional `-`/`_`/space separator and any amount of zero padding, since zero padding *should* carry no meaning and the same box gets written down several ways over time. Where it turns out to carry meaning — `A5` and `A05` are two real boxes in one inventory — the number counts as taken and a warning names the spellings, since that is a labelling problem to fix on the boxes. What it prints is the canonical spelling, uppercase prefix and dash and two digits, whatever the existing IDs look like. Takes the series prefix as an argument, an optional inventory path (default `inventory.json` in the current directory), `--start`/`--max` for the range (`--start 0` for a series numbering from zero) and `-n` to stop after the first few; exit status 1 when the series is full and 2 when the arguments or the inventory file cannot be used.
+
 ## [v0.15.0] - 2026-08-12
 
 ### Added
