@@ -33,6 +33,7 @@ Local vocabulary format (local-vocabulary.yaml):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -40,6 +41,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from inventory_md import sources, tingbok_embedded
 
 # Caches keyed by (id(vocab), lang) — valid as long as the vocab dict is not mutated.
 # Safe in normal use because the vocabulary dict is loaded once and lives for the
@@ -68,18 +71,23 @@ logger = logging.getLogger(__name__)
 VIRTUAL_ROOT_ID = "_root"
 CATEGORY_BY_SOURCE_ID = "category_by_source"
 
-_EAN_CACHE_TTL_DAYS = 7
-_LOOKUP_CACHE_TTL_DAYS = 7
+#: Cache lifetimes, in days, for answers tingbok *gave*.  Both match tingbok's
+#: own SKOS cache TTL (``tingbok.services.skos.CACHE_TTL_SECONDS``, 60 days) —
+#: they were 7 here and 60 there for months, with a comment in tingbok claiming
+#: they matched.  A product's identity and a concept's place in the hierarchy
+#: change about as often as tingbok gains a new upstream, so the shorter figure
+#: bought nothing but traffic.
+_EAN_CACHE_TTL_DAYS = 60
+_LOOKUP_CACHE_TTL_DAYS = 60
 
-# Human-friendly labels for known source identifiers
-_SOURCE_LABELS: dict[str, str] = {
-    "off": "OpenFoodFacts",
-    "agrovoc": "AGROVOC",
-    "dbpedia": "DBpedia",
-    "wikidata": "Wikidata",
-    "gpt": "Google Product Taxonomy",
-    "tingbok": "Tingbok",
-}
+#: Lifetime for a cached *absence* — a 404 from tingbok, stored as ``data: null``.
+#: Deliberately much shorter than the positive TTL, because the two age quite
+#: differently: a product tingbok knows about stays known, but one it does not
+#: know about is precisely the kind that gets contributed, by another machine,
+#: another person, or the shopping pipeline.  This client unlinks the entry after
+#: its own successful PUT, so the single-machine loop never waits — this figure
+#: only bounds how long someone *else's* contribution stays invisible here.
+_EAN_NEGATIVE_CACHE_TTL_DAYS = 7
 
 
 def _cache_read(path: Path, ttl_days: int) -> dict | None:
@@ -106,6 +114,33 @@ class TingbokUnavailableError(RuntimeError):
     """Raised when the tingbok service cannot be reached or returns an error."""
 
 
+def default_tingbok_cache_dir() -> Path:
+    """Where client-side tingbok responses (EANs, lookups, source registry) are kept."""
+    return Path.home() / ".cache" / "inventory-md" / "tingbok"
+
+
+def refresh_source_registry(
+    tingbok_url: str | None,
+    session: niquests.Session | None = None,
+    cache_dir: Path | None = None,
+) -> None:
+    """Ask tingbok which category sources exist, if it can be reached.
+
+    Cheap and best-effort: the answer is cached on disk for
+    :data:`inventory_md.sources.REGISTRY_CACHE_TTL_DAYS` days, and a failure
+    leaves the bundled table in place.  Call it once before building a category
+    tree, so ``category_by_source`` groups get tingbok's names rather than this
+    package's possibly-stale copy of them.
+    """
+    if not tingbok_url:
+        return
+    sources.refresh_registry_from_tingbok(
+        tingbok_url,
+        session=session,
+        cache_dir=cache_dir if cache_dir is not None else default_tingbok_cache_dir(),
+    )
+
+
 # =============================================================================
 # VOCABULARY FILE DISCOVERY
 # =============================================================================
@@ -119,7 +154,7 @@ def find_vocabulary_files() -> list[Path]:
     2. ~/.config/inventory-md/vocabulary.yaml
     3. ./vocabulary.yaml or ./local-vocabulary.yaml (highest priority)
 
-    The canonical package vocabulary is fetched from tingbok; use
+    The canonical vocabulary is fetched from tingbok; use
     load_global_vocabulary(tingbok_url=...) for the full vocabulary.
 
     Returns:
@@ -176,14 +211,14 @@ def load_global_vocabulary(
 ) -> dict[str, Concept]:
     """Load and merge vocabulary from all standard locations.
 
-    The canonical package vocabulary is fetched from tingbok (lowest priority).
-    Local overrides from /etc/inventory-md/, ~/.config/inventory-md/, and the
-    current directory are merged on top (highest priority last).
+    The canonical vocabulary is fetched from tingbok (lowest priority).  Local
+    overrides from /etc/inventory-md/, ~/.config/inventory-md/, and the current
+    directory are merged on top (highest priority last).
 
     Args:
-        tingbok_url: URL of a running tingbok service. If provided, the package
-            vocabulary is fetched from tingbok. If unreachable, no package-level
-            concepts are loaded.
+        tingbok_url: URL of a running tingbok service. If provided, the
+            vocabulary is fetched from tingbok. If unreachable, no
+            tingbok-level concepts are loaded.
         skip_cwd: If True, skip vocabulary files found in the current working
             directory (useful when local vocab is loaded separately).
 
@@ -192,12 +227,13 @@ def load_global_vocabulary(
     """
     merged: dict[str, Concept] = {}
 
-    # Fetch package vocabulary from tingbok (lowest priority)
+    # Fetch the tingbok vocabulary (lowest priority)
     if tingbok_url:
-        pkg_vocab = fetch_vocabulary_from_tingbok(tingbok_url, session=session)
-        if pkg_vocab:
-            logger.info("Loaded %d concepts from tingbok (%s)", len(pkg_vocab), tingbok_url)
-            merged.update(pkg_vocab)
+        refresh_source_registry(tingbok_url, session=session)
+        tingbok_vocab = fetch_vocabulary_from_tingbok(tingbok_url, session=session)
+        if tingbok_vocab:
+            logger.info("Loaded %d concepts from tingbok (%s)", len(tingbok_vocab), tingbok_url)
+            merged.update(tingbok_vocab)
 
     for vocab_path in find_vocabulary_files():
         try:
@@ -215,7 +251,7 @@ def load_global_vocabulary(
 
 
 def fetch_vocabulary_from_tingbok(url: str, session: niquests.Session | None = None) -> dict[str, Concept]:
-    """Fetch the package vocabulary from a running tingbok service.
+    """Fetch the vocabulary from a running tingbok service.
 
     Args:
         url:     Base URL of the tingbok service (e.g. "https://tingbok.plann.no").
@@ -235,7 +271,11 @@ def fetch_vocabulary_from_tingbok(url: str, session: niquests.Session | None = N
         response.raise_for_status()
         data: dict[str, Any] = response.json()
     except Exception as e:
-        raise TingbokUnavailableError(f"Failed to fetch vocabulary from tingbok {endpoint}: {e}") from e
+        # An installed tingbok can answer this without a service running.
+        data = tingbok_embedded.call("get_vocabulary")
+        if not data:
+            raise TingbokUnavailableError(f"Failed to fetch vocabulary from tingbok {endpoint}: {e}") from e
+        logger.info("tingbok unreachable at %s; using the installed tingbok package instead", endpoint)
 
     concepts: dict[str, Concept] = {}
     for concept_id, raw in data.items():
@@ -251,7 +291,7 @@ def fetch_vocabulary_from_tingbok(url: str, session: niquests.Session | None = N
         try:
             concept = Concept.from_dict(raw)
             for u in raw_source_uris:
-                src = _uri_to_source(u)
+                src = sources.uri_to_source(u)
                 if src and src not in concept.source_uris:
                     concept.source_uris[src] = u
             concept.source_paths = raw_source_paths
@@ -286,7 +326,14 @@ def resolve_vocabulary_from_tingbok(
         response.raise_for_status()
         data: dict[str, Any] = response.json()
     except Exception as e:
-        raise TingbokUnavailableError(f"Failed to resolve vocabulary from tingbok {endpoint}: {e}") from e
+        # An installed tingbok can answer this without a service running.  It is
+        # asked to resolve offline: a caller that got here has no network, so
+        # falling through to DBpedia and friends for every unknown label would
+        # only burn the timeout again, once per label.
+        data = tingbok_embedded.call("resolve_vocabulary", labels, lang=lang, offline=True)
+        if not data:
+            raise TingbokUnavailableError(f"Failed to resolve vocabulary from tingbok {endpoint}: {e}") from e
+        logger.info("tingbok unreachable at %s; using the installed tingbok package instead", endpoint)
 
     concepts: dict[str, Concept] = {}
     for concept_id, raw in data.get("concepts", {}).items():
@@ -301,7 +348,7 @@ def resolve_vocabulary_from_tingbok(
         try:
             concept = Concept.from_dict(raw)
             for u in raw_source_uris:
-                src = _uri_to_source(u)
+                src = sources.uri_to_source(u)
                 if src and src not in concept.source_uris:
                     concept.source_uris[src] = u
             concept.source_paths = raw_source_paths
@@ -430,7 +477,7 @@ def load_local_vocabulary(path: Path, default_source: str = "local") -> dict[str
     Args:
         path: Path to local-vocabulary.yaml or local-vocabulary.json
         default_source: Default source for concepts without an explicit source
-            field. Use "tingbok" for the bundled package vocabulary.
+            field. Use "tingbok" for concepts that came from tingbok.
 
     Returns:
         Dictionary mapping concept IDs to Concept objects.
@@ -580,11 +627,97 @@ def lookup_concept(label: str, vocabulary: dict[str, Concept]) -> Concept | None
     return None
 
 
+def _ancestors_cache_path(cache_dir: Path | None, concept_id: str) -> Path | None:
+    """Cache filename for one concept's ancestors, or ``None`` for no cache.
+
+    The readable part of the name is the id with non-alphanumerics collapsed,
+    which is ambiguous by itself — ``bike-clamp``, ``bike_clamp``, ``bike/clamp``
+    and ``bike clamp`` all collapse to the same thing, and :func:`check_quality
+    <inventory_md.check_quality.check_duplicate_concepts>` reports 51 such pairs
+    in one real inventory.  A hash of the raw id disambiguates them; the
+    readable part is kept only so the cache directory can be browsed by eye.
+    """
+    if cache_dir is None:
+        return None
+    readable = re.sub(r"[^A-Za-z0-9]+", "_", concept_id).strip("_")[:60] or "concept"
+    digest = hashlib.sha256(concept_id.encode("utf-8")).hexdigest()[:12]
+    return cache_dir / f"ancestors_{readable}_{digest}.json"
+
+
+def fetch_ancestors_from_tingbok(
+    concept_id: str,
+    url: str,
+    session: niquests.Session | None = None,
+    cache_dir: Path | None = None,
+) -> list[str] | None:
+    """Ask tingbok for every transitive ancestor of *concept_id*, nearest first.
+
+    Answers the question a local vocabulary cannot when it has never heard of
+    the concept: tingbok knows its own hierarchy, and knowing it in one place
+    was the point of the endpoint.
+
+    Args:
+        concept_id: The concept to ask about.  Path ids keep their slashes.
+        url:        Base URL of the tingbok service.
+        session:    Optional ``niquests.Session`` to reuse.
+        cache_dir:  Where to cache the answer, for
+                    :data:`_LOOKUP_CACHE_TTL_DAYS` days.  A concept tingbok does
+                    not have is cached as such, so a category that is simply
+                    local is not asked about again and again.
+
+    Returns:
+        The ancestor list, ``[]`` for a concept tingbok has but places at the
+        root, or ``None`` when tingbok has no such concept or cannot be reached.
+    """
+    from urllib.parse import quote  # noqa: PLC0415
+
+    cache_path = _ancestors_cache_path(cache_dir, concept_id)
+    if cache_path is not None:
+        entry = _cache_read(cache_path, _LOOKUP_CACHE_TTL_DAYS)
+        if entry is not None:
+            ancestors = entry.get("ancestors")
+            return ancestors if isinstance(ancestors, list) else None
+
+    # "tingbok has no such concept" is a stable answer worth remembering; an
+    # unreachable tingbok is not.  Caching the second would be actively harmful
+    # here, because a server predating the ancestors endpoint answers it from
+    # the /api/vocabulary/{id:path} catch-all with a 404 — so a single run
+    # against a not-yet-upgraded tingbok would disable the feature for the whole
+    # TTL, long after the upgrade.
+    definitive = False
+    try:
+        import niquests  # noqa: PLC0415
+
+        getter = session.get if session is not None else niquests.get
+        endpoint = f"{url.rstrip('/')}/api/ancestors/{quote(concept_id, safe='/')}"
+        response = getter(endpoint, timeout=5.0)
+        definitive = getattr(response, "status_code", None) == 404
+        response.raise_for_status()
+        data = response.json()
+        ancestors = data.get("ancestors")
+        if not isinstance(ancestors, list):
+            raise ValueError("response has no 'ancestors' list")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Could not fetch ancestors of %r from tingbok: %s", concept_id, exc)
+        ancestors = tingbok_embedded.call("get_ancestors", concept_id)
+        if ancestors is None:
+            if cache_path is not None and definitive:
+                _cache_write(cache_path, ancestors=None)
+            return None
+
+    if cache_path is not None:
+        _cache_write(cache_path, ancestors=ancestors)
+    return ancestors
+
+
 def is_descendant_of(
     concept_id: str,
     ancestor_id: str,
     vocabulary: dict[str, Concept],
     _visited: set[str] | None = None,
+    tingbok_url: str | None = None,
+    session: niquests.Session | None = None,
+    cache_dir: Path | None = None,
 ) -> bool:
     """Return True if ``concept_id`` is ``ancestor_id`` or a transitive descendant of it.
 
@@ -592,7 +725,16 @@ def is_descendant_of(
     multiple broader parents). Used e.g. to decide whether a category is a kind
     of ``food``. Category matching is a general problem, so it lives here rather
     than in individual consumers (shopping list, expiry report, ...).
+
+    When *tingbok_url* is given and the local vocabulary cannot place the
+    concept — it has never heard of it, or holds it with no parent — tingbok is
+    asked instead, via ``GET /api/vocabulary/{id}/ancestors``.  That is the only
+    case worth a round-trip: a concept the inventory *has* placed has an answer
+    already, and this function is called in loops (shopping list, expiry
+    report), so second-guessing every negative would be an HTTP request per
+    item.  An unreachable tingbok leaves the local answer standing.
     """
+    is_top_level = _visited is None
     if concept_id == ancestor_id:
         return True
     visited = _visited if _visited is not None else set()
@@ -600,9 +742,15 @@ def is_descendant_of(
         return False
     visited.add(concept_id)
     concept = vocabulary.get(concept_id)
-    if not concept:
-        return False
-    return any(is_descendant_of(b, ancestor_id, vocabulary, visited) for b in concept.broader)
+    if concept is not None and concept.broader:
+        return any(is_descendant_of(b, ancestor_id, vocabulary, visited) for b in concept.broader)
+    if tingbok_url and is_top_level:
+        # Only for the concept originally asked about.  A parent reached while
+        # walking is one the local vocabulary named, so it is already placed.
+        ancestors = fetch_ancestors_from_tingbok(concept_id, tingbok_url, session=session, cache_dir=cache_dir)
+        if ancestors is not None:
+            return ancestor_id in ancestors
+    return False
 
 
 def _infer_hierarchy(concepts: dict[str, Concept]) -> None:
@@ -635,6 +783,58 @@ def _infer_hierarchy(concepts: dict[str, Concept]) -> None:
                 parent = concepts[parent_id]
                 if concept_id not in parent.narrower:
                     parent.narrower.append(concept_id)
+
+
+def create_path_ancestor_stubs(concepts: dict[str, Concept]) -> None:
+    """Create the missing path ancestors of orphaned pathed concepts, in place.
+
+    A concept id is a path, so ``epoxy/filler`` says it belongs under ``epoxy``.
+    :func:`_infer_hierarchy` acts on that, but only when the parent concept
+    already exists — and a category typed into an inventory that tingbok cannot
+    resolve arrives as a bare stub with no parent and no siblings created for
+    it.  The result is not a top-level oddity but something worse: the tree's
+    root list excludes anything with a "/" in its id, so such a concept is
+    reachable from no root at all.  In ``~/solveig-inventory`` nine concepts were
+    invisible this way, ``epoxy/filler``, ``epoxy/hardener`` and ``epoxy/pigment``
+    among them, with no ``epoxy`` anywhere in the vocabulary.
+
+    A stub created at the top level is also added to the virtual root's
+    ``narrower`` whitelist, since that is what the tree's root list is built
+    from when tingbok's ``_root`` is present.
+
+    Only concepts with **no** ``broader`` at all are given path ancestors.  A
+    concept that declares a parent has already been placed, possibly somewhere
+    its path does not suggest: ``_add_category_path()`` wires ``klær/jakke`` to
+    the canonical ``clothing`` and deliberately creates no ``klær`` concept, and
+    stubbing every path prefix blindly would undo that.
+
+    Args:
+        concepts: Dictionary of concepts to update.
+    """
+    to_create: set[str] = set()
+    for concept in concepts.values():
+        if concept.broader or "/" not in concept.id:
+            continue
+        parts = concept.id.split("/")
+        for i in range(1, len(parts)):
+            ancestor = "/".join(parts[:i])
+            if ancestor not in concepts:
+                to_create.add(ancestor)
+
+    virtual_root = concepts.get(VIRTUAL_ROOT_ID)
+    for stub_id in sorted(to_create, key=lambda x: x.count("/")):
+        concepts[stub_id] = Concept(
+            id=stub_id,
+            prefLabel=stub_id.split("/")[-1].replace("-", " ").replace("_", " ").title(),
+            source="inferred",
+        )
+        # Creating the stub is not enough when a virtual root is present: the
+        # tree's roots come from ``_root.narrower``, which is a whitelist, so a
+        # top-level stub nobody added to it would be created and still reachable
+        # from nowhere — which is the bug this function exists to fix.  tingbok
+        # serves ``_root``, so that is the normal case rather than an edge one.
+        if virtual_root is not None and "/" not in stub_id and stub_id not in virtual_root.narrower:
+            virtual_root.narrower.append(stub_id)
 
 
 def create_broader_stubs(concepts: dict[str, Concept]) -> None:
@@ -736,7 +936,7 @@ def _add_category_by_source_nodes(concepts: dict[str, Concept]) -> None:
                 _ensure_source_path_node(
                     src_root,
                     concepts,
-                    _SOURCE_LABELS.get(src, src.title()),
+                    sources.source_label(src),
                     CATEGORY_BY_SOURCE_ID,
                 )
                 src_node = concepts[src_root]
@@ -753,7 +953,7 @@ def _add_category_by_source_nodes(concepts: dict[str, Concept]) -> None:
             _ensure_source_path_node(
                 src_root,
                 concepts,
-                _SOURCE_LABELS.get(src, src.title()),
+                sources.source_label(src),
                 CATEGORY_BY_SOURCE_ID,
             )
 
@@ -855,6 +1055,8 @@ def build_category_tree(vocabulary: dict[str, Concept], infer_hierarchy: bool = 
     }
 
     if infer_hierarchy:
+        # Ancestors first: _infer_hierarchy only links a path parent that exists.
+        create_path_ancestor_stubs(concepts)
         _infer_hierarchy(concepts)
 
     create_broader_stubs(concepts)
@@ -1316,7 +1518,7 @@ def enrich_categories_via_lookup(
             logger.warning("Skipping malformed lookup response for %r: %s", label, exc)
             continue
         for u in raw_source_uris:
-            src = _uri_to_source(u)
+            src = sources.uri_to_source(u)
             if src and src not in concept.source_uris:
                 concept.source_uris[src] = u
 
@@ -1345,7 +1547,8 @@ def lookup_ean_via_tingbok(
     ``None`` on 404 or network failure.
 
     When *cache_dir* is provided, successful responses are cached for
-    :data:`_EAN_CACHE_TTL_DAYS` days so repeat runs avoid unnecessary network
+    :data:`_EAN_CACHE_TTL_DAYS` days (a cached 404 for the shorter
+    :data:`_EAN_NEGATIVE_CACHE_TTL_DAYS`) so repeat runs avoid unnecessary network
     calls.
 
     Args:
@@ -1365,7 +1568,12 @@ def lookup_ean_via_tingbok(
         cache_path = cache_dir / f"{ean}.json"
         entry = _cache_read(cache_path, _EAN_CACHE_TTL_DAYS)
         if entry is not None:
-            return entry.get("data")  # None means 404 was cached
+            data = entry.get("data")  # None means 404 was cached
+            # A cached absence expires sooner than a cached product; re-read it
+            # against the shorter window and fall through to the network if the
+            # only thing the cache knows is that tingbok did not know.
+            if data is not None or _cache_read(cache_path, _EAN_NEGATIVE_CACHE_TTL_DAYS) is not None:
+                return data
 
     getter = session.get if session is not None else niquests.get
     base = tingbok_url.rstrip("/")
@@ -1492,20 +1700,3 @@ def report_ean_to_tingbok(
                 cache_path.unlink()
     except Exception as exc:
         logger.warning("Failed to report EAN %s to tingbok: %s", ean, exc)
-
-
-def _uri_to_source(uri: str) -> str | None:
-    """Determine the source name from a URI prefix."""
-    if uri.startswith("off:"):
-        return "off"
-    if uri.startswith("gpt:"):
-        return "gpt"
-    if "aims.fao.org/" in uri:
-        return "agrovoc"
-    if "dbpedia.org/" in uri:
-        return "dbpedia"
-    if "wikidata.org/" in uri:
-        return "wikidata"
-    if uri.startswith("https://tingbok.plann.no/"):
-        return "tingbok"
-    return None

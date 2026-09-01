@@ -185,7 +185,10 @@ reports at three levels:
 - **WARNING** — items tagged `TODO`, items with no category, categories the
   vocabulary cannot resolve, food with no best-before date, and shop-specific
   EANs that never got a chain prefix
-- **INFO** — empty containers, missing descriptions, containers with no images
+- **INFO** — empty containers, missing descriptions, containers with no images,
+  and category IDs that differ only in separator or plural form
+  (`cling-film`/`clingfilm`, `lentil`/`lentils`) — reported rather than
+  repaired, because which spelling is canonical is not yet settled
 
 `-v` for detail, `--fix-categories` to apply the suggested category
 replacements, `--no-tingbok` to keep it offline. Exit status is 1 if there were

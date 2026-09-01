@@ -214,19 +214,36 @@ def check_broad_categories(data: dict, broad: set[str]) -> list:
     ]
 
 
-def _is_food_concept(concept_data: dict | None) -> bool:
+def _under_food(concept_id: str) -> bool:
+    """True if *concept_id* is ``food`` itself or sits on a ``food/`` path."""
+    return concept_id == "food" or concept_id.startswith("food/")
+
+
+def _is_food_concept(concept_data: dict | None, ancestors_of=None) -> bool:
     """True if a resolved concept is under the food hierarchy.
 
     Food concepts have an id like ``food/...`` or a ``broader`` path rooted at
     ``food`` (e.g. ``chickpeas`` → broader ``food/legumes``). Non-food (e.g.
     ``dishwasher_detergent`` → ``product/chemical_product/...``) returns False.
+
+    The ``broader`` test only reaches one level, so a concept two hops from food
+    (``soybeans`` → ``legumes`` → ``food/legumes``) used to come back as
+    non-food and its missing best-before went unreported.  *ancestors_of* is an
+    optional ``(concept_id) -> list[str] | None`` — normally tingbok's
+    ``/ancestors`` endpoint — consulted when the shallow test says no.  It
+    returning ``None`` (no such concept, or tingbok unreachable) leaves the
+    shallow answer standing, so an offline run is no worse than before.
     """
     if not concept_data:
         return False
     cid = concept_data.get("id") or ""
-    if cid == "food" or cid.startswith("food/"):
+    if _under_food(cid):
         return True
-    return any(b == "food" or b.startswith("food/") for b in (concept_data.get("broader") or []))
+    if any(_under_food(b) for b in (concept_data.get("broader") or [])):
+        return True
+    if ancestors_of is not None and cid:
+        return any(_under_food(a) for a in (ancestors_of(cid) or ()))
+    return False
 
 
 def check_food_without_bb(data: dict, is_food) -> list:
@@ -251,18 +268,19 @@ def check_food_without_bb(data: dict, is_food) -> list:
     return [f"Food items without best-before: {len(offenders)} items — e.g. {sample}{more}"]
 
 
-def _category_is_food(cat: str, resolve) -> bool:
+def _category_is_food(cat: str, resolve, ancestors_of=None) -> bool:
     """Whether a category string denotes food.
 
     An explicit path is trusted by its root: ``food/...`` is food, anything else
     (``hardware/nuts``, ``product/...``) is not — this disambiguates leaves like
     ``nuts`` that resolve to ``food/nuts`` but are written ``hardware/nuts`` for
     fasteners. A bare leaf is resolved via *resolve* and checked for a food
-    ancestor.
+    ancestor, using *ancestors_of* when the concept's own ``broader`` does not
+    settle it.
     """
     if "/" in cat:
         return cat.split("/", 1)[0] == "food"
-    return _is_food_concept(resolve(cat))
+    return _is_food_concept(resolve(cat), ancestors_of=ancestors_of)
 
 
 def _make_food_classifier(base: str | None):
@@ -272,9 +290,16 @@ def _make_food_classifier(base: str | None):
     def resolve(leaf: str) -> dict | None:
         return _lookup_tingbok(leaf, base) if base else None
 
+    def ancestors_of(concept_id: str) -> list | None:
+        if not base or not _VOCAB_AVAILABLE:
+            return None
+        return _vocabulary.fetch_ancestors_from_tingbok(
+            concept_id, base, cache_dir=_vocabulary.default_tingbok_cache_dir()
+        )
+
     def is_food(cat: str) -> bool:
         if cat not in cache:
-            cache[cat] = _category_is_food(cat, resolve)
+            cache[cat] = _category_is_food(cat, resolve, ancestors_of=ancestors_of)
         return cache[cat]
 
     return is_food
@@ -412,6 +437,97 @@ def _check_category_path(
         fix_map[cat] = preferred_path
 
     return Counter(), infos, fix_map
+
+
+def _separator_key(concept_id: str) -> str:
+    """Concept ID with dashes, underscores and spaces removed, casefolded."""
+    return re.sub(r"[-_ ]", "", concept_id.casefold())
+
+
+def _singular_key(key: str) -> str:
+    """A crude singular form of an already separator-normalised key.
+
+    Deliberately crude, because it only ever compares IDs that both exist: a
+    rule that over-fires in the abstract can only produce a false report when
+    the inventory genuinely contains both spellings.  Words of three characters
+    or fewer after the strip are left alone, so ``gas`` is not read as a plural
+    of ``ga``.
+    """
+    for suffix, replacement in (("ies", "y"), ("es", ""), ("s", "")):
+        if key.endswith(suffix) and len(key) - len(suffix) >= 3:
+            return key[: -len(suffix)] + replacement
+    return key
+
+
+#: Known false negatives of :func:`_singular_key`: it is applied to both sides
+#: of a candidate pair, so a singular that itself ends in ``s`` is stripped too
+#: and the pair never meets — ``glass``/``glasses``, ``lens``/``lenses``,
+#: ``dress``/``dresses``.  Left alone deliberately: a stemmer good enough to
+#: tell those apart is a bigger thing than this report, which is advisory and
+#: is read by someone who can see the two IDs anyway.
+
+
+def _duplicate_concept_groups(concepts: dict) -> tuple[list[list[str]], list[list[str]]]:
+    """Return (separator-variant groups, plural-variant groups) of concept IDs.
+
+    The whole ID is normalised, not just the leaf: upstream taxonomies reach one
+    concept by many ancestor chains — ``book`` sits under 30 different paths in
+    a real vocabulary — and those are the same concept, not a typo.
+
+    Every ID is considered for both rules.  Excluding the members of a separator
+    group from the plural pass loses a third spelling: given ``bike-clamp``,
+    ``bike_clamp`` and ``bike-clamps``, the report would name the first two and
+    never mention the third, so the reader fixes the report rather than the
+    category.  A plural group that adds nothing to a separator group already
+    reported is dropped, so nothing is said twice.
+    """
+    by_separator: dict[str, list[str]] = {}
+    for cid in concepts:
+        by_separator.setdefault(_separator_key(cid), []).append(cid)
+
+    separator_groups = [sorted(ids) for key, ids in sorted(by_separator.items()) if len(ids) > 1]
+    already_reported = {frozenset(g) for g in separator_groups}
+
+    by_singular: dict[str, list[str]] = {}
+    for key, ids in by_separator.items():
+        by_singular.setdefault(_singular_key(key), []).extend(ids)
+    plural_groups = [
+        sorted(ids)
+        for key, ids in sorted(by_singular.items())
+        if len(ids) > 1 and frozenset(ids) not in already_reported
+    ]
+
+    return separator_groups, plural_groups
+
+
+def check_duplicate_concepts(concepts: dict) -> list:
+    """Flag concept IDs that differ only in separator or in plural form.
+
+    ``cling-film`` and ``clingfilm``, ``bike-clamp`` and ``bike_clamp``,
+    ``lentil`` and ``lentils`` are each one category written two ways, and each
+    spelling then carries half the items.
+
+    Both spellings usually come back marked tingbok-sourced, which is why this
+    does not filter by source: `bike_hardware` is in tingbok's vocabulary and
+    `bike-hardware` is not, but the inventory wrote the latter, tingbok resolved
+    it on its own, and the result is two concepts.  Measured against
+    `~/solveig-inventory` on 2026-09-01: 65 groups, 46 of them with both
+    spellings marked tingbok-sourced.
+
+    Reported, not repaired.  Which spelling is canonical — dashes or
+    underscores, singular or plural — is an open question in tingbok's own
+    consistency TODO, and normalising them here would decide it by accident.
+    """
+    separator_groups, plural_groups = _duplicate_concept_groups(concepts)
+
+    issues: list[str] = []
+    for groups, detail in ((separator_groups, "separator"), (plural_groups, "plural form")):
+        if not groups:
+            continue
+        sample = "; ".join(" + ".join(g) for g in groups[:8])
+        more = "" if len(groups) <= 8 else f"; … (+{len(groups) - 8} more)"
+        issues.append(f"Category IDs differing only in {detail} ({len(groups)}): {sample}{more}")
+    return issues
 
 
 def check_empty_containers(data: dict) -> list:
@@ -563,6 +679,8 @@ def run_all_checks(
         warnings += cat_warnings
         infos += cat_infos
         fix_map.update(cat_fixes)
+        # Advisory: which spelling is canonical is not settled, so this is INFO.
+        infos += check_duplicate_concepts(concepts)
 
     if tingbok_url:
         base = tingbok_url.rstrip("/")

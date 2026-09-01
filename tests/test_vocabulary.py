@@ -1181,7 +1181,7 @@ concepts:
 
 
 class TestPackageSourceAttribution:
-    """Tests for distinguishing package vocabulary from user-local vocabulary."""
+    """Tests for distinguishing the tingbok vocabulary from user-local vocabulary."""
 
     def test_load_local_vocabulary_defaults_to_source_local(self, tmp_path):
         """load_local_vocabulary() without default_source uses 'local'."""
@@ -1298,35 +1298,271 @@ class TestConceptSourceUris:
         assert concept.source_uris == {}
 
 
-class TestUriToSource:
-    """Tests for _uri_to_source() helper."""
+# URI → source mapping moved to inventory_md.sources, which tingbok now feeds
+# over GET /api/sources; its tests live in tests/test_sources.py.
 
-    def test_off_uri(self):
-        assert vocabulary._uri_to_source("off:en:potatoes") == "off"
 
-    def test_agrovoc_uri(self):
-        assert vocabulary._uri_to_source("http://aims.fao.org/aos/agrovoc/c_6139") == "agrovoc"
+class TestAncestorsFromTingbok:
+    """``is_descendant_of`` can ask tingbok when the local vocabulary cannot answer."""
 
-    def test_dbpedia_uri(self):
-        assert vocabulary._uri_to_source("http://dbpedia.org/resource/Potato") == "dbpedia"
+    def _session(self, ancestors, concept_id="soybeans"):
+        session = MagicMock()
+        response = MagicMock()
+        response.json.return_value = {"id": concept_id, "ancestors": ancestors}
+        response.raise_for_status.return_value = None
+        session.get.return_value = response
+        return session
 
-    def test_wikidata_uri(self):
-        assert vocabulary._uri_to_source("http://www.wikidata.org/entity/Q10998") == "wikidata"
+    def test_local_vocabulary_answers_without_a_request(self):
+        vocab = {
+            "food": vocabulary.Concept(id="food", prefLabel="Food"),
+            "food/beans": vocabulary.Concept(id="food/beans", prefLabel="Beans", broader=["food"]),
+        }
+        session = self._session([])
+        assert vocabulary.is_descendant_of(
+            "food/beans", "food", vocab, tingbok_url="https://tingbok.example", session=session
+        )
+        session.get.assert_not_called()
 
-    def test_unknown_uri(self):
-        assert vocabulary._uri_to_source("https://example.com/foo") is None
+    def test_a_concept_the_inventory_has_never_heard_of_is_asked_upstream(self):
+        vocab = {"food": vocabulary.Concept(id="food", prefLabel="Food")}
+        session = self._session(["food/legumes", "food"])
+        assert vocabulary.is_descendant_of(
+            "soybeans", "food", vocab, tingbok_url="https://tingbok.example", session=session
+        )
+        session.get.assert_called_once()
 
-    def test_tingbok_uri(self):
-        assert vocabulary._uri_to_source("https://tingbok.plann.no/api/vocabulary/food") == "tingbok"
+    def test_upstream_saying_no_is_a_no(self):
+        vocab = {"food": vocabulary.Concept(id="food", prefLabel="Food")}
+        session = self._session(["hardware/fasteners", "hardware"])
+        assert not vocabulary.is_descendant_of(
+            "m8-bolt", "food", vocab, tingbok_url="https://tingbok.example", session=session
+        )
 
-    def test_tingbok_uri_base(self):
-        assert vocabulary._uri_to_source("https://tingbok.plann.no/") == "tingbok"
+    def test_a_local_concept_with_a_parent_is_not_second_guessed(self):
+        """Only a concept the local vocabulary cannot place is worth a round-trip."""
+        vocab = {
+            "food": vocabulary.Concept(id="food", prefLabel="Food"),
+            "bolt": vocabulary.Concept(id="bolt", prefLabel="Bolt", broader=["hardware"]),
+            "hardware": vocabulary.Concept(id="hardware", prefLabel="Hardware"),
+        }
+        session = self._session(["food"])
+        assert not vocabulary.is_descendant_of(
+            "bolt", "food", vocab, tingbok_url="https://tingbok.example", session=session
+        )
+        session.get.assert_not_called()
 
-    def test_dbpedia_https_uri(self):
-        assert vocabulary._uri_to_source("https://dbpedia.org/resource/Potato") == "dbpedia"
+    def test_no_tingbok_url_means_no_request(self):
+        vocab = {"food": vocabulary.Concept(id="food", prefLabel="Food")}
+        assert not vocabulary.is_descendant_of("soybeans", "food", vocab)
 
-    def test_wikidata_https_uri(self):
-        assert vocabulary._uri_to_source("https://www.wikidata.org/entity/Q10998") == "wikidata"
+    def test_an_unreachable_tingbok_falls_back_to_the_local_answer(self):
+        vocab = {"food": vocabulary.Concept(id="food", prefLabel="Food")}
+        session = MagicMock()
+        session.get.side_effect = OSError("no route to host")
+        assert not vocabulary.is_descendant_of(
+            "soybeans", "food", vocab, tingbok_url="https://tingbok.example", session=session
+        )
+
+    def test_the_answer_is_cached(self, tmp_path):
+        vocab = {"food": vocabulary.Concept(id="food", prefLabel="Food")}
+        session = self._session(["food"])
+        for _ in range(3):
+            assert vocabulary.is_descendant_of(
+                "soybeans", "food", vocab, tingbok_url="https://tingbok.example", session=session, cache_dir=tmp_path
+            )
+        assert session.get.call_count == 1
+
+    def test_the_concept_id_is_url_escaped(self):
+        vocab = {"food": vocabulary.Concept(id="food", prefLabel="Food")}
+        session = self._session(["food"])
+        vocabulary.is_descendant_of(
+            "smør & brød", "food", vocab, tingbok_url="https://tingbok.example", session=session
+        )
+        url = session.get.call_args[0][0]
+        assert " " not in url
+        assert "/api/ancestors/" in url
+
+    def test_a_path_id_keeps_its_slashes(self):
+        vocab = {"food": vocabulary.Concept(id="food", prefLabel="Food")}
+        session = self._session(["food"])
+        vocabulary.is_descendant_of(
+            "food/legumes/soybeans", "food", vocab, tingbok_url="https://tingbok.example", session=session
+        )
+        assert session.get.call_args[0][0].endswith("/api/ancestors/food/legumes/soybeans")
+
+    def test_separator_variants_do_not_share_a_cache_entry(self, tmp_path):
+        """``bike-clamp`` and ``bike_clamp`` are two concepts, not one.
+
+        The filename used to be the id with every non-alphanumeric run replaced
+        by ``_``, so those two — and ``bike/clamp``, and ``bike clamp`` — all
+        collided.  Not hypothetical: ``check_duplicate_concepts`` reports 51
+        separator-variant pairs in the one inventory measured.
+        """
+        first = self._session(["food"], concept_id="bike-clamp")
+        assert vocabulary.fetch_ancestors_from_tingbok(
+            "bike-clamp", "https://tingbok.example", session=first, cache_dir=tmp_path
+        ) == ["food"]
+
+        second = self._session(["hardware"], concept_id="bike_clamp")
+        assert vocabulary.fetch_ancestors_from_tingbok(
+            "bike_clamp", "https://tingbok.example", session=second, cache_dir=tmp_path
+        ) == ["hardware"]
+        second.get.assert_called_once()
+
+    def test_a_transport_failure_is_not_cached(self, tmp_path):
+        """An unreachable tingbok must not poison the cache for 60 days.
+
+        The realistic trigger is a server that predates the ancestors endpoint,
+        which answers it from the ``{concept_id:path}`` catch-all with a 404 —
+        so one check-quality run against it would have silently disabled the
+        feature until long after the server was upgraded.
+        """
+        dead = MagicMock()
+        dead.get.side_effect = OSError("no route to host")
+        assert (
+            vocabulary.fetch_ancestors_from_tingbok(
+                "soybeans", "https://tingbok.example", session=dead, cache_dir=tmp_path
+            )
+            is None
+        )
+        alive = self._session(["food"])
+        assert vocabulary.fetch_ancestors_from_tingbok(
+            "soybeans", "https://tingbok.example", session=alive, cache_dir=tmp_path
+        ) == ["food"]
+        alive.get.assert_called_once()
+
+    def test_a_real_404_is_still_cached(self, tmp_path):
+        """ "tingbok has no such concept" is a stable answer, unlike a dead socket."""
+        session = MagicMock()
+        response = MagicMock()
+        response.status_code = 404
+        response.raise_for_status.side_effect = RuntimeError("404")
+        session.get.return_value = response
+        vocab = {"food": vocabulary.Concept(id="food", prefLabel="Food")}
+        for _ in range(3):
+            assert not vocabulary.is_descendant_of(
+                "no-such", "food", vocab, tingbok_url="https://tingbok.example", session=session, cache_dir=tmp_path
+            )
+        assert session.get.call_count == 1
+
+
+class TestPathAncestorStubs:
+    """A pathed concept whose path parent does not exist is currently orphaned.
+
+    Measured in ~/solveig-inventory/vocabulary.json on 2026-09-01: ``epoxy/filler``,
+    ``epoxy/hardener`` and ``epoxy/pigment`` all have an empty ``broader`` and there
+    is no ``epoxy`` concept, so they are reachable from no root at all — the tree's
+    root list excludes anything with a "/" in its id.  Nine concepts were in that
+    state.
+    """
+
+    def _tree(self, **concepts):
+        return vocabulary.build_category_tree(dict(concepts))
+
+    def test_missing_path_parent_is_created(self):
+        tree = self._tree(
+            **{"epoxy/filler": vocabulary.Concept(id="epoxy/filler", prefLabel="Filler", source="inventory")}
+        )
+        assert "epoxy" in tree.concepts
+        assert tree.concepts["epoxy/filler"].broader == ["epoxy"]
+        assert "epoxy/filler" in tree.concepts["epoxy"].narrower
+
+    def test_the_orphan_becomes_reachable_from_a_root(self):
+        tree = self._tree(
+            **{
+                "epoxy/filler": vocabulary.Concept(id="epoxy/filler", prefLabel="Filler", source="inventory"),
+                "epoxy/hardener": vocabulary.Concept(id="epoxy/hardener", prefLabel="Hardener", source="inventory"),
+            }
+        )
+        assert "epoxy" in tree.roots
+        assert sorted(tree.concepts["epoxy"].narrower) == ["epoxy/filler", "epoxy/hardener"]
+
+    def test_every_intermediate_level_is_created(self):
+        tree = self._tree(
+            **{
+                "bike/consumables/lube": vocabulary.Concept(
+                    id="bike/consumables/lube", prefLabel="Lube", source="inventory"
+                )
+            }
+        )
+        assert "bike" in tree.concepts
+        assert "bike/consumables" in tree.concepts
+        assert tree.concepts["bike/consumables/lube"].broader == ["bike/consumables"]
+        assert tree.concepts["bike/consumables"].broader == ["bike"]
+
+    def test_the_stub_gets_a_readable_label(self):
+        tree = self._tree(
+            **{"anti-friction/mat": vocabulary.Concept(id="anti-friction/mat", prefLabel="Mat", source="inventory")}
+        )
+        assert tree.concepts["anti-friction"].prefLabel == "Anti Friction"
+
+    def test_an_existing_path_parent_is_left_alone(self):
+        tree = self._tree(
+            **{
+                "epoxy": vocabulary.Concept(id="epoxy", prefLabel="Two-part epoxy", source="tingbok"),
+                "epoxy/filler": vocabulary.Concept(id="epoxy/filler", prefLabel="Filler", source="inventory"),
+            }
+        )
+        assert tree.concepts["epoxy"].prefLabel == "Two-part epoxy"
+        assert tree.concepts["epoxy"].source == "tingbok"
+
+    def test_a_declared_broader_suppresses_the_path_stub(self):
+        """``_add_category_path`` deliberately creates no concept for an aliased root.
+
+        ``klær/jakke`` is wired to the canonical ``clothing`` and no ``klær``
+        concept is made; stubbing path ancestors blindly would undo that.
+        """
+        tree = self._tree(
+            **{
+                "clothing": vocabulary.Concept(id="clothing", prefLabel="Clothing", source="tingbok"),
+                "klær/jakke": vocabulary.Concept(
+                    id="klær/jakke", prefLabel="Jakke", broader=["clothing"], source="inventory"
+                ),
+            }
+        )
+        assert "klær" not in tree.concepts
+        assert tree.concepts["klær/jakke"].broader == ["clothing"]
+
+    def test_a_root_concept_without_a_path_is_untouched(self):
+        tree = self._tree(brunost=vocabulary.Concept(id="brunost", prefLabel="Brunost", source="inventory"))
+        assert tree.concepts["brunost"].broader == []
+
+    def test_the_orphan_is_reachable_even_with_a_root_whitelist(self):
+        """``_root.narrower`` is a whitelist, and tingbok serves ``_root``.
+
+        Creating the stub is not enough on that path: the tree's roots come
+        from the whitelist, so an ``epoxy`` nobody added to it is created and
+        still reachable from nowhere — which was the whole bug.
+        """
+        tree = vocabulary.build_category_tree(
+            {
+                "_root": vocabulary.Concept(id="_root", prefLabel="Root", narrower=["food"]),
+                "food": vocabulary.Concept(id="food", prefLabel="Food", source="tingbok"),
+                "epoxy/filler": vocabulary.Concept(id="epoxy/filler", prefLabel="Filler", source="inventory"),
+            }
+        )
+        assert "epoxy" in tree.concepts
+        assert "epoxy" in tree.roots
+        assert tree.concepts["epoxy/filler"].broader == ["epoxy"]
+
+    def test_an_existing_whitelist_entry_is_not_duplicated(self):
+        tree = vocabulary.build_category_tree(
+            {
+                "_root": vocabulary.Concept(id="_root", prefLabel="Root", narrower=["food", "epoxy"]),
+                "food": vocabulary.Concept(id="food", prefLabel="Food", source="tingbok"),
+                "epoxy": vocabulary.Concept(id="epoxy", prefLabel="Epoxy", source="tingbok"),
+                "epoxy/filler": vocabulary.Concept(id="epoxy/filler", prefLabel="Filler", source="inventory"),
+            }
+        )
+        assert tree.roots.count("epoxy") == 1
+
+    def test_disabled_when_hierarchy_inference_is_off(self):
+        tree = vocabulary.build_category_tree(
+            {"epoxy/filler": vocabulary.Concept(id="epoxy/filler", prefLabel="Filler", source="inventory")},
+            infer_hierarchy=False,
+        )
+        assert "epoxy" not in tree.concepts
 
 
 class TestFetchVocabularyFromTingbok:
@@ -2445,3 +2681,57 @@ class TestEnrichCategoriesVerbosity:
         out = capsys.readouterr().out
         assert "Looking up" in out
         assert "not found" in out
+
+
+class TestEanNegativeCacheTtl:
+    """A cached absence expires sooner than a cached product.
+
+    An EAN tingbok does not know about is precisely the kind that gets
+    contributed — by another machine, another person, or the shopping pipeline
+    — so holding "not found" for the full 60 days would hide someone else's
+    contribution for two months.
+    """
+
+    def _entry(self, tmp_path, ean, data, age_days):
+        from datetime import datetime, timedelta, timezone
+
+        cached_at = datetime.now(timezone.utc) - timedelta(days=age_days)
+        (tmp_path / f"{ean}.json").write_text(
+            json.dumps({"cached_at": cached_at.isoformat(), "data": data}), encoding="utf-8"
+        )
+
+    def _session(self, payload):
+        session = MagicMock()
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = payload
+        response.raise_for_status.return_value = None
+        session.get.return_value = response
+        return session
+
+    def test_a_fresh_absence_is_honoured(self, tmp_path):
+        self._entry(tmp_path, "123", None, age_days=1)
+        session = self._session({"ean": "123"})
+        assert (
+            vocabulary.lookup_ean_via_tingbok("123", "https://tingbok.example", session=session, cache_dir=tmp_path)
+            is None
+        )
+        session.get.assert_not_called()
+
+    def test_a_stale_absence_is_re_asked(self, tmp_path):
+        self._entry(tmp_path, "123", None, age_days=30)
+        session = self._session({"ean": "123", "name": "Contributed meanwhile"})
+        result = vocabulary.lookup_ean_via_tingbok(
+            "123", "https://tingbok.example", session=session, cache_dir=tmp_path
+        )
+        assert result["name"] == "Contributed meanwhile"
+        session.get.assert_called_once()
+
+    def test_a_product_is_still_held_for_the_long_ttl(self, tmp_path):
+        self._entry(tmp_path, "123", {"ean": "123", "name": "Cached"}, age_days=30)
+        session = self._session({"ean": "123", "name": "Fresh"})
+        result = vocabulary.lookup_ean_via_tingbok(
+            "123", "https://tingbok.example", session=session, cache_dir=tmp_path
+        )
+        assert result["name"] == "Cached"
+        session.get.assert_not_called()

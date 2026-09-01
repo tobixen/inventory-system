@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
+from inventory_md import check_quality
 from inventory_md.check_quality import (
     DEFAULT_BROAD_CATEGORIES,
     OVERRIDE_BROAD_TAGS,
@@ -299,3 +300,125 @@ class TestShopSpecificEans:
     def test_no_ean_ignored(self):
         data = _inv([{"id": "misc", "metadata": {"categories": ["misc"]}}])
         assert check_shop_specific_eans(data) == []
+
+
+class TestDuplicateConcepts:
+    """Concept IDs that differ only in separator or plural form.
+
+    ``cling-film`` and ``clingfilm`` are one thing written two ways.  Which
+    spelling is canonical — dashes or underscores, singular or plural — is an
+    open question in tingbok's own TODO, so this reports and does not rewrite.
+    """
+
+    def _concepts(self, *ids, source="inventory"):
+        return {cid: {"id": cid, "prefLabel": cid, "source": source} for cid in ids}
+
+    def test_separator_variants_are_reported(self):
+        issues = check_quality.check_duplicate_concepts(self._concepts("bike-clamp", "bike_clamp"))
+        assert len(issues) == 1
+        assert "bike-clamp" in issues[0]
+        assert "bike_clamp" in issues[0]
+        assert "separator" in issues[0]
+
+    def test_a_missing_separator_counts(self):
+        issues = check_quality.check_duplicate_concepts(self._concepts("cling-film", "clingfilm"))
+        assert len(issues) == 1
+
+    def test_plural_variants_are_reported_separately(self):
+        issues = check_quality.check_duplicate_concepts(self._concepts("lentil", "lentils"))
+        assert len(issues) == 1
+        assert "plural" in issues[0]
+
+    def test_both_rules_at_once_give_two_lines(self):
+        issues = check_quality.check_duplicate_concepts(self._concepts("bike-clamp", "bike_clamp", "lentil", "lentils"))
+        assert len(issues) == 2
+
+    def test_distinct_concepts_are_not_reported(self):
+        assert check_quality.check_duplicate_concepts(self._concepts("epoxy", "resin", "hardener")) == []
+
+    def test_the_same_leaf_under_different_paths_is_not_a_duplicate(self):
+        """Upstream taxonomies reach one concept by many routes; that is not a typo.
+
+        ``book`` appears under 30 different Wikidata/DBpedia ancestor chains in a
+        real vocabulary.  Normalising only the leaf would report every one of them.
+        """
+        concepts = self._concepts("written_work/book", "product/book", "manifestation/document/book", source="tingbok")
+        assert check_quality.check_duplicate_concepts(concepts) == []
+
+    def test_tingbok_sourced_pairs_are_reported_too(self):
+        """Both spellings usually come back marked tingbok-sourced.
+
+        ``bike_hardware`` is in tingbok's vocabulary and ``bike-hardware`` is
+        not — the inventory wrote the latter, tingbok resolved it on its own, and
+        the result is two concepts, both labelled tingbok.  Filtering by source
+        would hide 46 of the 65 groups in a real inventory.
+        """
+        concepts = self._concepts("bike-hardware", "bike_hardware", source="tingbok")
+        assert len(check_quality.check_duplicate_concepts(concepts)) == 1
+
+    def test_short_words_are_not_singularised(self):
+        """Stripping a trailing s from a three-letter word invents duplicates."""
+        assert check_quality.check_duplicate_concepts(self._concepts("gas", "ga")) == []
+
+    def test_a_group_of_three_is_one_group(self):
+        issues = check_quality.check_duplicate_concepts(self._concepts("bike-tool", "bike_tool", "biketool"))
+        assert len(issues) == 1
+        assert "bike-tool + bike_tool + biketool" in issues[0]
+
+    def test_pathed_ids_stay_readable(self):
+        """Concept IDs contain "/", so joining a group with "/" is unreadable.
+
+        ``electronics/component/electronics/components`` is two IDs with no
+        visible boundary, and this report's only job is to be read.
+        """
+        issues = check_quality.check_duplicate_concepts(
+            self._concepts("electronics/component", "electronics/components")
+        )
+        assert "electronics/component + electronics/components" in issues[0]
+
+    def test_a_plural_third_spelling_is_not_dropped(self):
+        """A concept in a separator pair used to be excluded from plural analysis.
+
+        Given three spellings of one category, the report named two of them and
+        never mentioned the third — so the reader "fixes" the report without
+        fixing the category.
+        """
+        issues = check_quality.check_duplicate_concepts(self._concepts("bike-clamp", "bike_clamp", "bike-clamps"))
+        joined = " ".join(issues)
+        assert "bike-clamps" in joined, joined
+        assert "bike-clamp" in joined
+        assert "bike_clamp" in joined
+
+    def test_a_long_run_of_groups_is_summarised(self):
+        concepts = self._concepts(*[f"thing-{n}" for n in range(20)], *[f"thing_{n}" for n in range(20)])
+        issues = check_quality.check_duplicate_concepts(concepts)
+        assert len(issues) == 1
+        assert "(20)" in issues[0]
+        assert "+12 more" in issues[0]
+
+    def test_no_concepts_is_no_issues(self):
+        assert check_quality.check_duplicate_concepts({}) == []
+
+
+class TestFoodClassificationViaAncestors:
+    """``_is_food_concept`` only ever looked one ``broader`` level deep."""
+
+    def test_a_direct_food_parent_still_works_without_tingbok(self):
+        assert _is_food_concept({"id": "chickpeas", "broader": ["food/legumes"]})
+
+    def test_a_grandparent_needs_the_ancestors_endpoint(self):
+        """``soybeans`` → ``legumes`` → ``food/legumes``: two hops, previously missed."""
+        concept = {"id": "soybeans", "broader": ["legumes"]}
+        assert not _is_food_concept(concept)
+        assert _is_food_concept(concept, ancestors_of=lambda cid: ["legumes", "food/legumes", "food"])
+
+    def test_ancestors_saying_no_is_a_no(self):
+        concept = {"id": "m8-bolt", "broader": ["fasteners"]}
+        assert not _is_food_concept(concept, ancestors_of=lambda cid: ["fasteners", "hardware"])
+
+    def test_an_unreachable_tingbok_leaves_the_shallow_answer(self):
+        concept = {"id": "chickpeas", "broader": ["food/legumes"]}
+        assert _is_food_concept(concept, ancestors_of=lambda cid: None)
+
+    def test_no_concept_is_not_food(self):
+        assert not _is_food_concept(None, ancestors_of=lambda cid: ["food"])

@@ -28,24 +28,42 @@ about it belong in `~/tingbok/TODO.md`. What is left here is how an inventory
 *consumes* that data: resolving a category string on an item line, merging local
 vocabulary on top, and degrading when tingbok is unreachable.
 
-### 342 of 1736 concepts have no parent
+### 353 of 1736 concepts have no parent
 
-Measured in `~/solveig-inventory/vocabulary.json` on 2026-08-13 (generated
-2026-08-06 against a tingbok returning 200). A fifth of the tree is roots, which
-is why the category browser reads as a flat list of oddities — `comma_splice`,
-`brunost` and `dolmas` are all top-level.
+Re-measured in `~/solveig-inventory/vocabulary.json` on 2026-09-01 (was 342 on
+2026-08-13, so drifting upward). A fifth of the tree is roots, which is why the
+category browser reads as a flat list of oddities — `comma_splice`, `brunost`
+and `dolmas` are all top-level. Of the 353: **98 inventory-sourced** (labels
+tingbok resolved to nothing, so a local stub with no parent), **134
+tingbok-sourced** (a gap in the hierarchy, tracked in `~/tingbok/TODO.md`) and
+121 `inferred`, parents synthesised locally that never got a parent of their own.
 
-The half that is this project's: **89 of those roots are inventory-sourced**,
-i.e. labels tingbok resolved to nothing, so `vocabulary.py` created a local stub
-with no parent. Some are near-duplicates of each other (`cling-film` *and*
-`clingfilm`, `brie` *and* `bries`) and want normalising or aliasing before
-anything is asked of tingbok. Of the remaining 253, **132 are tingbok-sourced**
-and unparented — a gap in the hierarchy, tracked there — and 121 are `inferred`,
-parents synthesised locally that never got a parent of their own.
+Two pieces of this are done:
 
-Before treating this as a bug, decide what an unresolvable label *should* do. A
-local stub at the root is a defensible answer; the complaint is only that nobody
-chose it deliberately.
+* ~~Nine pathed concepts with no path parent~~ — **fixed 2026-09-01**. These
+  were not top-level oddities but invisible: `epoxy/filler`, `epoxy/hardener`
+  and `epoxy/pigment` all existed with no `epoxy` concept, and the root list
+  excludes anything with a "/" in its id, so they were reachable from nowhere at
+  all. `build_category_tree()` now creates the missing path ancestors first.
+* ~~Near-duplicates (`cling-film` *and* `clingfilm`)~~ — **reported 2026-09-01**
+  by `inventory-md-check-quality`, at INFO: 51 groups differing only in
+  separator and 14 only in plural form. Deliberately not repaired; see below.
+
+What is left is the decision, and it is still open: **what should an
+unresolvable label do?** A local stub at the root is a defensible answer; the
+complaint is only that nobody chose it deliberately. The alternative worth
+considering is a holding node, the way `category_by_source` works, so the
+browser's top level shows real categories and the unresolved ones are one click
+away.
+
+Note the near-duplicate finding cuts against the framing above: **46 of the 65
+groups have both spellings marked tingbok-sourced**. `bike_hardware` is in
+tingbok's `vocabulary.yaml` and `bike-hardware` is not — the inventory wrote the
+latter, tingbok resolved it on its own, and the result is two concepts. So this
+is not only about labels tingbok failed to resolve; it is also about labels it
+resolved twice. Which spelling is canonical (dashes or underscores, singular or
+plural) is an open question in `~/tingbok/TODO.md`, and normalising in this
+project would decide it by accident — hence a report and not a rewrite.
 
 ### Auto-write `category:` back into the inventory markdown
 
@@ -57,21 +75,24 @@ back would make the enrichment durable and reviewable in git.
 version of exactly this, so the mechanism exists; what is missing is the decision
 about when a lookup is confident enough to edit the user's file unasked.
 
-### Optional tingbok fallback
+### ~~Optional tingbok fallback~~ — done 2026-09-01
 
-Make tingbok an optional dependency: if the library is installed and
-`tingbok.plann.no` does not respond, call it directly instead of failing.
+New `tingbok` extra and `inventory_md.tingbok_embedded`: where the tingbok
+package is installed and `tingbok.plann.no` does not respond, the vocabulary,
+the batch resolve, the ancestor chains and the source registry are answered
+in-process through tingbok's new `tingbok.embedded` entry point. Reads only —
+an EAN observation is a write to the service's data file, and a failed push
+stays a failed push.
 
-This also wants a review of which dependencies are optional at all — `mcp` is
-clearly not needed for this.
+Two things this needed that were not obvious from the original note: tingbok had
+no supported in-process entry point (reaching into `tingbok.app`'s private
+globals from here would break on any refactor there), and `POST
+/api/vocabulary/resolve` had to grow an `offline` flag, since a caller that
+reaches the fallback has no network and the default would fall through to
+DBpedia for every unknown label.
 
-### "Package vocabulary" is a name for something that no longer exists
-
-`vocabulary.py` still calls it the "package vocabulary" — five times in comments
-and docstrings, plus the `pkg_vocab` local — for what is now simply the tingbok
-vocabulary; the function those comments describe is
-`fetch_vocabulary_from_tingbok()`. Nothing bundles a vocabulary any more. Almost
-entirely a rename, but it misleads on every read.
+The dependency review it asked for: `mcp` is not a dependency of this project
+and never was — nothing under `src/` imports it and it appears in no extra.
 
 ### `vocabulary.py` is a second implementation of tingbok's data model
 
@@ -84,15 +105,37 @@ carries:
 * `build_category_tree()`, which re-derives hierarchy (inferred parents, stub
   nodes, `category_by_source` virtual nodes) from the flat list tingbok serves.
   If tingbok changes how hierarchy works, this breaks silently;
-* `_cache_read`/`_cache_write`, paralleling tingbok's own cache, with the TTLs
-  set independently in the two projects — **7 days here, 60 days there**;
-* `_SOURCE_LABELS` and `_uri_to_source()`, i.e. knowledge of which sources exist.
+* ~~`_cache_read`/`_cache_write` … **7 days here, 60 days there**~~ — **fixed
+  2026-09-01**, both 60 days now, and tingbok's comment claiming they already
+  matched is gone too. The two caches remain separate, which is fine: they cache
+  different things at different layers;
+* ~~`_SOURCE_LABELS` and `_uri_to_source()`~~ — **done 2026-09-01**. tingbok
+  serves `GET /api/sources`, and the new `inventory_md.sources` module consumes
+  it. The bundled table survives as the offline fallback but no longer has to be
+  *updated*, which was the actual defect.
 
-Most of this can be deleted rather than fixed, but only after tingbok serves the
-answers — an ancestors endpoint, a pre-built tree, source names and language
-chains, all tracked under "Serve hierarchy answers instead of making clients
-compute them" in `~/tingbok/TODO.md`. Deleting first is not an option: the
-duplication exists precisely because there is nothing to call yet.
+What is left is `Concept` and `build_category_tree()`, and here the framing
+above needs correcting. "Most of this can be deleted rather than fixed, but only
+after tingbok serves the answers" is only half true, and the ancestors endpoint
+(added to tingbok 2026-09-01) proved it: **nothing was deleted**. A second code
+path was added — `is_descendant_of()` consults tingbok for a concept the local
+vocabulary cannot place, `check_quality` uses it for food classification more
+than one hop from `food` — and both of those are real improvements, but neither
+removes the local walk.
+
+The reason is structural and will not change: `parse` generates a
+`vocabulary.json` that a **static web UI reads with no server in the loop**, and
+an inventory is routinely parsed with tingbok unreachable. `build_category_tree()`
+therefore has to keep working offline whatever tingbok's API grows. What
+"serve a pre-built tree" (tracked in `~/tingbok/TODO.md`) actually buys is that
+tingbok becomes *authoritative* — the local build becomes a fallback whose
+divergence is a bug rather than a design — not that the client shrinks. Worth
+doing for that reason; not worth doing while expecting a deletion.
+
+So the honest remaining task here is smaller than "delete a second
+implementation": make `build_category_tree()` a documented offline fallback,
+prefer a served tree when one is available, and compare the two so a divergence
+is noticed.
 
 ### `sync_eans_to_inventory.py` should be a CLI subcommand
 

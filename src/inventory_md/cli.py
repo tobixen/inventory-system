@@ -283,10 +283,12 @@ def parse_command(
 
             tingbok_session = niquests.Session(multiplexed=True) if tingbok_url else None
 
-            # Client-side cache for EAN and category lookups (one-week TTL).
-            from pathlib import Path as _Path
+            # Client-side cache for EAN and category lookups.
+            _tingbok_cache = vocabulary.default_tingbok_cache_dir() if tingbok_url else None
 
-            _tingbok_cache = _Path.home() / ".cache" / "inventory-md" / "tingbok" if tingbok_url else None
+            # Which category sources exist, and what to call them, is tingbok's
+            # to say; this refreshes the local copy before the tree is built.
+            vocabulary.refresh_source_registry(tingbok_url, session=tingbok_session, cache_dir=_tingbok_cache)
 
             # Collect all category labels used in this inventory (for batch resolve below).
             inventory_labels: list[str] = list(

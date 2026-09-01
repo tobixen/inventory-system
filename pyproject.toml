@@ -53,6 +53,14 @@ off = [
 skos = [
     "niquests"
 ]
+# Answer vocabulary questions in-process when tingbok.plann.no does not respond.
+# Unpinned on purpose: the in-process entry point (``tingbok.embedded``) arrived
+# after tingbok 0.14.0, and an older install simply has no such module, which
+# inventory_md.tingbok_embedded treats as "not available" like any other import
+# failure.  Nothing here is required — the HTTP client is the normal path.
+tingbok = [
+    "tingbok",
+]
 yaml = [
     "pyyaml>=6.0",
 ]

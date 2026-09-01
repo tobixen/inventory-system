@@ -16,10 +16,34 @@ The consolidation server described above is now implemented as
 [tingbok](https://github.com/tobixen/tingbok), running at
 **https://tingbok.plann.no**.
 
-inventory-md queries tingbok by default for the package vocabulary.  If
+inventory-md queries tingbok by default for the vocabulary.  If
 tingbok is unreachable, it falls back to the bundled `vocabulary.yaml`
 transparently.  SKOS and EAN lookups via tingbok are planned for later
 phases.
+
+Client-side responses (EAN lookups, category lookups, ancestor chains and the
+source registry) are cached under `~/.cache/inventory-md/tingbok/` for 60 days —
+the same figure tingbok uses for its own SKOS cache.  It was 7 days here against
+tingbok's 60 for months, with a comment in tingbok claiming the two matched.
+
+Two things are cached differently on purpose.  A cached *absence* — an EAN
+tingbok returned 404 for — expires after 7 days, because that is exactly the
+kind of record somebody else is about to contribute.  And an unreachable tingbok
+is not cached at all: only an answer tingbok actually gave is worth remembering,
+and a server predating an endpoint 404s it, so caching that would disable a
+feature for the whole TTL after the server was upgraded.
+
+## Answering without the service
+
+Where the `tingbok` package itself is installed (the `tingbok` extra, and by
+definition on the machine that runs the service), an unreachable
+tingbok.plann.no is not the end of it: the vocabulary, the batch resolve, the
+ancestor chains and the source registry are answered in-process instead, through
+`tingbok.embedded`.  Purely a fallback — HTTP is tried first, and an
+in-process answer is never written to the cache, so it can never suppress a
+later real request — and read-only: an EAN observation is a write to the
+service's data file and a failed push stays a failed push.  With no tingbok installed, or one older
+than the `tingbok.embedded` entry point, nothing changes from before.
 
 ## Configuration
 
@@ -81,6 +105,6 @@ The EAN cache (`ean_cache.json`) is still a flat JSON file in the working direct
 The single-threaded upstream fetcher with 503 is elegant - it naturally rate-limits without needing complex queuing or coordination.  A few considerations:
 
 - **Local database subsets**: Full DBpedia/Wikidata dumps are huge, but the server only needs the class hierarchy + multilingual labels.  Targeted extracts (e.g., all `skos:broader`/`P279` triples + `rdfs:label` in ~10 languages) could be 1-5 GB each - very manageable alongside the existing AGROVOC N-Triples file.
-- **Pre-warming**: Rather than only caching on first request, the server could pre-warm popular lookups from the package vocabulary's ~260 concepts.  This would make the first client experience much smoother.
+- **Pre-warming**: Rather than only caching on first request, the server could pre-warm popular lookups from the tingbok vocabulary's ~260 concepts.  This would make the first client experience much smoother.
 - **EAN contribution model**: Even before authentication, an append-only log with IP attribution and timestamps would let you audit and roll back bad data.  Signing can come later.
 - **Cache sharing between instances**: On a multi-instance host (like broxbox05 with furuset/solveig/demo), a shared lookup server would naturally deduplicate - all three instances query the same categories and EANs.  This is a stronger argument for the server than just caching locally per instance.
